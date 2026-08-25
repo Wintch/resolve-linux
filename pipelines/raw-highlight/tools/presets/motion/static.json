@@ -1,0 +1,5 @@
+{
+  "name": "static",
+  "description": "No motion. Useful for photos that are already tightly composed, where zoom/pan would distract, or for sequence-bursts that already have their own motion.",
+  "type": "static"
+}

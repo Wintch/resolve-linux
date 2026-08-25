@@ -1,0 +1,7 @@
+{
+  "name": "flash_cut",
+  "description": "1-2 frame white flash before the cut, like a camera flash. Good for accenting the music's beat at key moments.",
+  "type": "flash",
+  "flash_frames": 2,
+  "color": "white"
+}

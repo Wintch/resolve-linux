@@ -1,0 +1,7 @@
+{
+  "name": "fast",
+  "description": "Tight cuts, hype-reel style. Short single photos, near-flash bursts.",
+  "photo_duration": 1.2,
+  "sequence_frame_duration": 0.12,
+  "transition_duration": 0.25
+}

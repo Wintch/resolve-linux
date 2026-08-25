@@ -1,0 +1,7 @@
+{
+  "name": "medium",
+  "description": "Default balance between contemplative and dynamic.",
+  "photo_duration": 2.2,
+  "sequence_frame_duration": 0.2,
+  "transition_duration": 0.5
+}

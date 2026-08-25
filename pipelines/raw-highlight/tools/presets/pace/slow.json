@@ -1,0 +1,7 @@
+{
+  "name": "slow",
+  "description": "Contemplative, more time to look at each photo and bursts feel like a mini timelapse.",
+  "photo_duration": 3.5,
+  "sequence_frame_duration": 0.35,
+  "transition_duration": 0.8
+}

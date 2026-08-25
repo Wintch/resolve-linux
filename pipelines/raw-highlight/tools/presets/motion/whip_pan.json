@@ -1,0 +1,7 @@
+{
+  "name": "whip_pan",
+  "description": "Fast lateral pan with motion blur, good as a transition between high-energy blocks instead of a normal crossfade.",
+  "type": "pan_blur",
+  "direction": "random_lr",
+  "blur_strength": 8
+}

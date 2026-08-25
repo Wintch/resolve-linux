@@ -1,0 +1,23 @@
+{
+  "name": "concert",
+  "description": "Punchy contrast with lifted shadows for dark/stage-lit events, saturated, split-tone that warms highlights and shadows slightly (counters the typical stage blue/violet), soft vignette, subtle grain. Meant for low-light, high-ISO concert photos.",
+  "eq": {
+    "contrast": 1.12,
+    "saturation": 1.32,
+    "gamma": 1.12,
+    "brightness": 0.03
+  },
+  "colorbalance": {
+    "rs": 0.04, "gs": 0.0, "bs": -0.04,
+    "rm": 0.02, "gm": 0.0, "bm": -0.01,
+    "rh": 0.06, "gh": 0.0, "bh": -0.04
+  },
+  "vignette": {
+    "angle": "PI/6",
+    "x0": "w/2",
+    "y0": "h/2"
+  },
+  "grain": {
+    "strength": 3
+  }
+}

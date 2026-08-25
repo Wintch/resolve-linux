@@ -1,0 +1,8 @@
+{
+  "name": "kenburns_in",
+  "description": "Slow, even, centered zoom in. The safe default for single photos.",
+  "type": "zoompan",
+  "zoom_start": 1.0,
+  "zoom_end": 1.15,
+  "pan": "center"
+}

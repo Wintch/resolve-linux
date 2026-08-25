@@ -1,0 +1,8 @@
+{
+  "name": "kenburns_out",
+  "description": "Starts closer and pulls back. Good for closing out a block or revealing context.",
+  "type": "zoompan",
+  "zoom_start": 1.18,
+  "zoom_end": 1.0,
+  "pan": "center"
+}

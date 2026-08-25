@@ -1,7 +1,25 @@
 # resolve-linux
 
-DaVinci Resolve (Studio) on Linux — install notes, gotchas, official codec/requirements
-findings, and AI-driven control via [davinci-resolve-mcp](https://github.com/samuelgursky/davinci-resolve-mcp).
+Automating video editing on Linux, with [DaVinci Resolve](https://www.blackmagicdesign.com/products/davinciresolve)
+and its [scripting API](https://github.com/samuelgursky/davinci-resolve-mcp) (via MCP) as
+the primary path, and ffmpeg/Python pipelines for the parts that don't need Resolve at all
+or exist to prepare footage for it. Install notes, gotchas, official codec/requirements
+findings, MCP capability mapping, and standalone pipelines/guides live here together —
+one repo, not one per topic.
+
+## What's in here
+
+- **This README**: installing DaVinci Resolve Studio on Debian (unofficial, via
+  `makeresolvedeb`), the real codec/RAM/GPU picture vs. Blackmagic's official spec, and
+  everything found running it for real (see "Status" and the session logs below).
+- **[MCP-CAPABILITIES.md](MCP-CAPABILITIES.md)**: the full tool/action catalog for
+  AI-driven control of Resolve via its scripting API, live-probed against a real instance.
+- **[pipelines/raw-highlight/](pipelines/raw-highlight/)**: a standalone, tool-agnostic
+  guide + working ffmpeg/Python implementation for turning a RAW-heavy event shoot (photos,
+  plus any RAW video clips) into a finished highlight video. Doesn't require Resolve at
+  all — this is the "some things don't need it" half of the repo's scope. A second guide
+  covering the same pipeline done through Resolve/MCP instead is planned to join it here.
+
 Split out (2026-08-24) from an unrelated VR headset project (`reverb-g2`) on the same rig,
 where this had been accumulating as a side note.
 

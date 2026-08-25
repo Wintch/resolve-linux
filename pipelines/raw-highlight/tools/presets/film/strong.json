@@ -1,0 +1,38 @@
+{
+  "name": "strong",
+  "description": "Battered reel: the wear is part of the content. Coarse grain, obvious projector jitter, frequent scratches and dust, strong light leaks. Watch out, sustained for 2 minutes it gets tiring - watch it all the way through before deciding.",
+  "weave": {
+    "amplitude_px": 11,
+    "rotation_deg": 0.2,
+    "speed": 1.25
+  },
+  "chroma_shift_px": 2,
+  "grain": {
+    "strength": 64,
+    "opacity": 0.75,
+    "coarseness": 0.4
+  },
+  "halation": {
+    "threshold": 185,
+    "sigma": 10,
+    "opacity": 0.45,
+    "tint": {"rr": 1.0, "gg": 0.4, "bb": 0.15}
+  },
+  "scratches": {
+    "opacity": 0.6,
+    "loop_seconds": 8.0,
+    "seed": 11,
+    "scratch_rate": 7.0,
+    "hair_rate": 0.7,
+    "dust_density": 2.2,
+    "brightness": 200
+  },
+  "light_leak": {
+    "intensity": 0.6,
+    "period_left": 17.0,
+    "period_right": 22.0,
+    "sharpness": 10,
+    "falloff": 0.28,
+    "tint": {"rr": 1.0, "gg": 0.4, "bb": 0.14}
+  }
+}

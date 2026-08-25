@@ -1,0 +1,38 @@
+{
+  "name": "medium",
+  "description": "The analog look reads clearly but the photo is still the star. Visible grain, gate weave that gives life to still photos, some dirt and an occasional light leak.",
+  "weave": {
+    "amplitude_px": 6,
+    "rotation_deg": 0.1,
+    "speed": 1.0
+  },
+  "chroma_shift_px": 1,
+  "grain": {
+    "strength": 48,
+    "opacity": 0.5,
+    "coarseness": 0.5
+  },
+  "halation": {
+    "threshold": 200,
+    "sigma": 8,
+    "opacity": 0.3,
+    "tint": {"rr": 1.0, "gg": 0.45, "bb": 0.2}
+  },
+  "scratches": {
+    "opacity": 0.35,
+    "loop_seconds": 6.0,
+    "seed": 7,
+    "scratch_rate": 3.5,
+    "hair_rate": 0.35,
+    "dust_density": 1.0,
+    "brightness": 170
+  },
+  "light_leak": {
+    "intensity": 0.35,
+    "period_left": 23.0,
+    "period_right": 31.0,
+    "sharpness": 14,
+    "falloff": 0.22,
+    "tint": {"rr": 1.0, "gg": 0.42, "bb": 0.16}
+  }
+}

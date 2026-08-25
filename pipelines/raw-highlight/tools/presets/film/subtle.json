@@ -1,0 +1,23 @@
+{
+  "name": "subtle",
+  "description": "Barely noticeable: breaks digital flatness and takes the PowerPoint feel off a still photo, without the viewer thinking 'they slapped a filter on it'. No scratches or light leaks.",
+  "weave": {
+    "amplitude_px": 3,
+    "rotation_deg": 0.05,
+    "speed": 1.0
+  },
+  "chroma_shift_px": 0,
+  "grain": {
+    "strength": 40,
+    "opacity": 0.3,
+    "coarseness": 0.5
+  },
+  "halation": {
+    "threshold": 215,
+    "sigma": 7,
+    "opacity": 0.18,
+    "tint": {"rr": 1.0, "gg": 0.5, "bb": 0.25}
+  },
+  "scratches": {"opacity": 0},
+  "light_leak": {"intensity": 0}
+}
