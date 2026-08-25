@@ -7,6 +7,28 @@ or exist to prepare footage for it. Install notes, gotchas, official codec/requi
 findings, MCP capability mapping, and standalone pipelines/guides live here together —
 one repo, not one per topic.
 
+## Goal
+
+Get Resolve on Linux fully solved and ready to actually work with — install, gotchas,
+every pipeline that's worth having, automated wherever automation makes sense. For each
+editing task this covers, the aim is to have as many of these as apply:
+
+1. **A guide for doing it well through Resolve itself** — including Resolve's own
+   AI-assisted features (e.g. multicam auto-edit: detecting who's talking and cutting
+   between camera angles automatically), not just the manual mechanics.
+2. **Automation of that same task**, via the scripting API/MCP where Resolve's own tools
+   can be driven programmatically instead of by hand, so it doesn't have to be redone
+   through the GUI every time.
+3. **A Resolve-free alternative** (ffmpeg/Python, or whatever fits) where one exists and
+   is worth having — not every task can be replaced this way, but where it can, it means
+   one less dependency on Resolve being installed/running/licensed at all.
+4. **Free vs. Studio noted explicitly** wherever a feature is Studio-gated, so Free-edition
+   users know what does and doesn't apply to them, and so a Resolve-free alternative is
+   flagged as the practical path when the Studio-only route isn't available to them.
+
+Resolve stays the primary tool here — not everything can or should be reimplemented as a
+script — but every pipeline that *can* stand on its own outside Resolve gets to.
+
 ## What's in here
 
 - **This README**: installing DaVinci Resolve Studio on Debian (unofficial, via
@@ -19,6 +41,20 @@ one repo, not one per topic.
   plus any RAW video clips) into a finished highlight video. Doesn't require Resolve at
   all — this is the "some things don't need it" half of the repo's scope. A second guide
   covering the same pipeline done through Resolve/MCP instead is planned to join it here.
+- **[pipelines/prepare-for-resolve/](pipelines/prepare-for-resolve/)**: normalizes a
+  folder of footage (VFR, interlacing, codecs Resolve-on-Linux can't decode) so it imports
+  cleanly — a Python rewrite of a tool originally shared by Boris Kovalev on the Blackmagic
+  forum, informed by this repo's own confirmed AAC-decode findings. Not yet validated
+  against real footage — see that folder's README.
+
+### Guide backlog — not built yet, tracked so it isn't lost
+
+- **Multicam AI auto-edit**: Resolve's built-in feature for detecting who's speaking
+  across synced camera angles and auto-cutting between them. Needs: a guide for doing it
+  well by hand, an evaluation of how much of it the scripting API actually exposes for
+  automation, and a call on whether a non-Resolve equivalent is even worth attempting
+  (this one leans "hard to fully replace outside Resolve" — multicam sync + AI speaker
+  detection isn't a quick ffmpeg job — but worth confirming rather than assuming).
 
 Split out (2026-08-24) from an unrelated VR headset project (`reverb-g2`) on the same rig,
 where this had been accumulating as a side note.
