@@ -47,11 +47,45 @@ VIDEO_EXTENSIONS = {
 }
 
 
+def default_video_codec() -> str:
+    """Prefer GPU encoding (NVENC); fall back to CPU (libx264) only if NVENC isn't
+    available on this machine, with a loud warning -- GPU should always be tried first,
+    CPU only when there's genuinely no alternative."""
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=True
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "h264"
+    if "h264_nvenc" in out:
+        return "h264_nvenc"
+    print(
+        "WARNING: NVENC (h264_nvenc) not found on this machine's ffmpeg build -- falling "
+        "back to CPU encoding (libx264). This will be noticeably slower; if there's an "
+        "NVIDIA GPU here, check the ffmpeg build has NVENC support compiled in.",
+        file=sys.stderr,
+    )
+    return "h264"
+
+
+# Common broadcast/cinema constant rates. VFR sources get snapped to whichever of these
+# their own average is closest to -- never to an unrelated global default. A source shot
+# at a deliberate constant rate (25fps PAL, 60fps sports, etc.) is never touched by this at
+# all, since that branch only fires when `is_vfr()` is true in the first place.
+STANDARD_FRAMERATES = [23.976, 24, 25, 29.97, 30, 47.952, 48, 50, 59.94, 60]
+
+
+def snap_framerate(avg_fps: float) -> float:
+    return min(STANDARD_FRAMERATES, key=lambda f: abs(f - avg_fps))
+
+
 @dataclass
 class Decision:
     transcode_video: bool = False
     transcode_audio: bool = False
     deinterlace: bool = False
+    target_framerate: float | None = None  # only set when actually fixing VFR -- never
+    # applied just because a codec transcode is happening for an unrelated reason.
     reason: list[str] = field(default_factory=list)
 
     @property
@@ -109,7 +143,22 @@ def decide(info: dict, args: argparse.Namespace) -> Decision:
 
         if is_vfr(v):
             d.transcode_video = True
-            d.reason.append(f"variable frame rate -> forcing constant {args.framerate}fps")
+            avg_fps = float(Fraction(v.get("avg_frame_rate", "0/1")))
+            if args.framerate is not None:
+                target = float(args.framerate)
+                d.target_framerate = target
+                d.reason.append(
+                    f"variable frame rate (source averages ~{avg_fps:.3f}fps) -> forcing "
+                    f"constant {target}fps (--framerate override)"
+                )
+            else:
+                target = snap_framerate(avg_fps)
+                d.target_framerate = target
+                d.reason.append(
+                    f"variable frame rate -> snapping to constant {target}fps, the nearest "
+                    f"standard rate to this source's own ~{avg_fps:.3f}fps average (not a "
+                    "global default -- pass --framerate to override)"
+                )
 
         if is_interlaced(v) and not args.no_deinterlace:
             d.deinterlace = True
@@ -138,7 +187,12 @@ def build_ffmpeg_cmd(
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src)]
 
     if decision.transcode_video:
-        cmd += ["-c:v", args.video_codec, "-r", str(args.framerate)]
+        cmd += ["-c:v", args.video_codec]
+        # Only force a constant rate when actually fixing VFR -- a codec-only transcode
+        # (e.g. a bad-codec source that's already constant-rate) must not have its frame
+        # rate touched just because it's going through ffmpeg for an unrelated reason.
+        if decision.target_framerate is not None:
+            cmd += ["-r", str(decision.target_framerate)]
     else:
         cmd += ["-c:v", "copy"]
 
@@ -211,9 +265,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("source_dir", type=Path, help="Directory of source video files")
     p.add_argument("--output-dir", default="exportedvideo", help="Output directory (default: exportedvideo)")
-    p.add_argument("--framerate", type=int, default=24, help="Target constant framerate for VFR sources (default: 24)")
+    p.add_argument("--framerate", type=float, default=None, help="Force VFR sources to this constant framerate. Default: infer per-file, snapping each source's own average to the nearest standard rate (23.976/24/25/29.97/30/48/50/59.94/60) -- never a single global value")
     p.add_argument("--audio-codec", default="pcm_s24le", help="Target audio codec (default: pcm_s24le)")
-    p.add_argument("--video-codec", default="h264", help="Target video codec (default: h264; try prores_ks for editing)")
+    p.add_argument("--video-codec", default=None, help="Target video codec (default: h264_nvenc if this machine's ffmpeg has NVENC, else CPU h264 with a warning; try prores_ks for editing)")
     p.add_argument("--container", default="mkv", help="Output container extension (default: mkv)")
     p.add_argument("--no-deinterlace", action="store_true", help="Skip yadif deinterlacing (e.g. if you'll use Resolve Studio's own neural deinterlace instead)")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2), help="Parallel workers (default: half of CPU count, since ffmpeg itself multithreads per instance)")
@@ -229,6 +283,9 @@ def main(argv: list[str] | None = None) -> int:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         print("error: ffmpeg and ffprobe must both be on PATH", file=sys.stderr)
         return 1
+
+    if args.video_codec is None:
+        args.video_codec = default_video_codec()
 
     if not args.source_dir.is_dir():
         print(f"error: {args.source_dir} is not a directory", file=sys.stderr)

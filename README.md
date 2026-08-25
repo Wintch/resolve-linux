@@ -44,8 +44,14 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
 - **[pipelines/prepare-for-resolve/](pipelines/prepare-for-resolve/)**: normalizes a
   folder of footage (VFR, interlacing, codecs Resolve-on-Linux can't decode) so it imports
   cleanly — a Python rewrite of a tool originally shared by Boris Kovalev on the Blackmagic
-  forum, informed by this repo's own confirmed AAC-decode findings. Not yet validated
-  against real footage — see that folder's README.
+  forum, informed by this repo's own confirmed AAC-decode findings. **Validated against a
+  real 10-file footage directory** (2026-08-25) — see "Session update: real project build"
+  below and that folder's README.
+- **[pipelines/resolve-power/](pipelines/resolve-power/)**: a self-contained Python tool
+  that pins this rig's CPU/GPU to full performance while Resolve is actually running, and
+  reports back to minimum watts otherwise — because the sibling `reverb-g2` project's own
+  power watchdog only reacts to VR/game activity, not Resolve. See "Session update: real
+  project build" below for why this exists and what the measured payoff actually is.
 
 ### Guide backlog — not built yet, tracked so it isn't lost
 
@@ -105,7 +111,9 @@ doesn't ship a native `.deb`, and doesn't officially support Debian at all (see
   CUDA-13-enabled PyTorch matching this rig's driver. See "AI-driven control via MCP"
   below for the full tool/capability mapping. **Live connection confirmed** — External
   scripting set to Local, `doctor.py` and a real scripting-API call both succeed against
-  DaVinci Resolve Studio 21.0.4.5 (see that section for the live-test output).
+  DaVinci Resolve Studio 21.0.4.5 (see that section for the live-test output). *(Superseded
+  2026-08-25 — this was connection-only; see "Session update: real project build" below for
+  the MCP actually driving a full project/import/edit/render workflow.)*
 - **AI Extras pack finished downloading** (all 7 packages, ~24.4GB — IntelliSearch,
   Slate ID, Speech Generator, Voice Training, Extended Transcription language support,
   Tensor RT Engines). Not yet tested whether these specific features run well given the
@@ -264,6 +272,265 @@ root cause is nailed down precisely:
 
 Left the hung Resolve process running (not killed) as of this write-up, in case further
 inspection is wanted before the Xorg-session test.
+
+## Session update (2026-08-25, later): Xorg + reboot — render livelock RESOLVED
+
+Ran tier 1 of the fix plan above: logged into **GNOME on Xorg** (confirmed via
+`$XDG_SESSION_TYPE=x11` and no `Xwayland` process in `ps aux` — a native X11 session,
+not XWayland-rootless). First pass, done in-place without a reboot, was **not** enough on
+its own: `ResolveDebug.txt` still showed `NVIDIA GPU Driver: 595.71, supports CUDA -1.-1`
+and `Matches: NVML, OpenCL, XOrg` — CUDA absent, still defaulting to OpenCL, even though
+GPUDetect's monitor-correlation error was gone (`XOrg` now matched, unlike the Wayland
+session's "no monitors found"). The `-1.-1` CUDA version is the tell: the CUDA driver
+library itself hadn't come up cleanly, independent of session type.
+
+A **full machine reboot**, still into the Xorg session, fixed it: fresh
+`ResolveDebug.txt` shows `NVIDIA GPU Driver: 595.71, supports CUDA 13.2`, `Matches: CUDA,
+NVML, OpenCL, XOrg`, and `Compute API set to automatic, defaulting to CUDA.` So the real
+fix is **Xorg session + reboot**, not Xorg alone — something about the driver/kernel
+module state from the prior Wayland session (or from switching sessions live) left CUDA
+half-initialized until a clean boot.
+
+**Render livelock confirmed fixed**, tested via the scripting API against the same
+`test1` project/timeline used in the original livelock reproduction:
+- **ProRes 422 HQ** (the exact preset that livelocked before): job completed in **1.2s**
+  (`TimeTakenToRenderInMs: 1213`), no stuck `CompletionPercentage`, no runaway
+  `EstimatedTimeRemainingInMs`. Output verified with `ffprobe`: valid 1920x1080 ProRes
+  QuickTime, 6.67s, ~100MB, PCM audio.
+- **H.264 NVIDIA** (a codec that was **entirely absent** from `GetRenderCodecs()` before —
+  confirmed via the API at the time): now present (`GetRenderCodecs("MP4")` lists
+  `H.264 NVIDIA` and `H.265 NVIDIA`), and a real render job with it completed in **1.18s**.
+  Output verified: valid 1920x1080 H.264 MP4, ~14MB, plays back correctly. **H.265 NVIDIA**
+  is listed too (not yet render-tested, but same NVENC code path as H.264 — high
+  confidence it works).
+
+This means the earlier "H.264/HEVC decode/encode on Linux requires Studio + NVIDIA GPU
+with no documented software fallback" finding was accurate about the *hard requirement*
+but incomplete about *this rig's failure mode*: the codec wasn't missing from Resolve, it
+was gated behind GPUDetect's broken CUDA correlation — fix that, and NVENC H.264/H.265
+export is available.
+
+**Practical takeaway for anyone hitting this**: if `GPUDetect`'s `Matches:` line is
+missing `CUDA` and `Main.GPUConfig` defaults to OpenCL on an NVIDIA-driver Linux box,
+check the driver-reported CUDA version in the same log line first
+(`supports CUDA X.Y` vs `supports CUDA -1.-1`) — a `-1.-1` means the CUDA stack itself
+isn't up yet, and switching desktop session type without a reboot may not clear it.
+**Tier 2 of the fix plan (swapping `nvidia-open` for the proprietary `nvidia-driver`
+package) turned out to be unnecessary** — closing that option out.
+
+Verification render artifacts (`/home/iam/Videos/x11_cuda_retest/`) deleted after
+`ffprobe` confirmation — throwaway test output, not project media, and disk was already
+at 85% (see above). The `test1` project still has one stale "Job 1" (`Job Cancelled`,
+`livelock_retest_20260825.mov`) left over from a same-day pre-reboot attempt — harmless,
+can be cleared from the Render Queue panel whenever.
+
+**Still open**: editing/color-grading *quality* under this fixed config hasn't been
+separately re-judged (the prior session's smooth-playback finding predates this reboot);
+worth a real hands-on editing pass now that both playback and render are confirmed
+healthy, not just launching.
+
+## Session update (2026-08-25, later still): real project build via MCP, audio/interlace prep validated, power findings
+
+Everything above through the CUDA fix was launch/render-plumbing validation. This pass is
+the thing that was actually still missing: **the MCP driving a full real workflow** (new
+project → real footage → import → cut → timeline-level grade prep → render), not just a
+connection check — and a first look at whether this rig's VR power-management setup helps
+or hurts Resolve.
+
+### Real workflow, driven entirely through the scripting API
+
+- **New project** (`resolve_linux_validation`) created via `ProjectManager.CreateProject`,
+  not reused from `test1` — a clean validation target.
+- **Real source footage**: 10 files from `~/Videos/oldback_nvme` (H.264/HEVC video, AAC
+  audio, matching this repo's own codec findings — the same directory
+  [MCP-CAPABILITIES.md](MCP-CAPABILITIES.md) used for the original AAC-decode-failure
+  finding).
+- **`prepare_for_resolve.py` run for real, not just `--dry-run`**, against the whole
+  directory (`pipelines/prepare-for-resolve/prepare_for_resolve.py ~/Videos/oldback_nvme
+  --output-dir ~/Videos/resolve_validation_sources`): all 10 files correctly identified as
+  AAC (needs transcode to `pcm_s24le`); **zero interlaced sources in this batch**, but the
+  `yadif` deinterlace branch (the "old `.sh` script" logic — see the file's own
+  docstring/credit section) is unexercised here only because none of these particular files
+  needed it, not because it's unimplemented. All 10 processed in 5.5s (video stream-copied,
+  only audio transcoded — cheap), verified with `ffprobe`: every output's audio stream is
+  `pcm_s24le`, matching the fix already confirmed at the log level in the original AAC
+  finding.
+- **Real correctness bug found and fixed in the VFR path, flagged by the user immediately
+  after the first run**: one file (`video_2025-12-31_14-53-07.mp4`) was flagged VFR and the
+  script forced it to a hardcoded global default of **24fps** — but that source's actual
+  average is **~30.019fps** (`r_frame_rate` exactly `30/1`, `avg_frame_rate` a hair off from
+  timestamp jitter, enough to trip `is_vfr()`'s exact-fraction check). Forcing a ~30fps
+  source down to 24fps for no reason tied to the source itself is a real motion-quality
+  regression (dropped/duplicated frames), not a neutral normalization — the user's point
+  exactly: "si se filma en 25 constantes, es por algo, no lo forzamos a 24 porque sí." Fixed
+  two ways: (1) `--framerate`'s default is now `None` — when unset, a VFR source's own
+  average is snapped to the *nearest standard rate* (23.976/24/25/29.97/30/48/50/59.94/60)
+  instead of a single hardcoded value, so a ~30fps source now correctly targets 30fps, not
+  24; (2) the forced `-r` was previously applied to **every** video transcode, including
+  ones triggered only by a bad codec on an already-constant-rate source — now `-r` is only
+  emitted when a VFR fix is actually the reason for the transcode. A **second bug** this
+  surfaced along the way: `default_video_codec()` (the NVENC-preference logic above) was
+  defined but never actually called from `main()`, so `args.video_codec` stayed `None` and
+  crashed every real (non-dry-run) invocation — fixed by resolving it once in `main()`
+  before dispatching to the worker pool. Re-ran on the affected file after both fixes:
+  confirmed via `ffprobe` — `r_frame_rate=30/1`, `avg_frame_rate=30/1`, audio `pcm_s24le`.
+- **Timeline built from the prepped clips** (`MediaPool.CreateTimelineFromClips`, 4 of the
+  10 imported) — a real edit with hard cuts between 4 different source clips, 8030 frames
+  at 24fps (~5.6 minutes of source cut down to ~5.6 min... actually 8030/24 ≈ 334.6s ≈
+  5m35s of assembled timeline).
+- **Grain at the timeline level, not per-clip — partially automated, one step genuinely
+  needs the GUI**: wrapped the whole 4-clip cut into a single `CreateCompoundClip` (API
+  call, confirmed working — `Items after: [('validation_cut_ALL', 86400, 94430)]`). Grading
+  *that one compound clip* on the Color page grades the whole cut uniformly, which is the
+  actual mechanism for "timeline-level, not per-clip" in Resolve. **Adding the Film Grain
+  OFX filter itself to that clip's node graph could not be scripted** — confirmed via this
+  MCP's own `docs/notes/openfx-notes.md`: the public Resolve scripting API has no method to
+  add a ResolveFX/OFX filter to a node's tool list (`graph`'s action list has
+  `get_tools_in_node` but nothing like `add_tool`); this is a documented gap in Blackmagic's
+  own API, not something the MCP declined to wrap. Confirmed the plugin itself **is**
+  present in this Studio install (`/opt/resolve/UI_Resource/Steinway/filmGrain.bmp` and
+  friends — Resolve's own Effects Library icon assets for it), so the manual step is
+  expected to work cleanly: open the Color page, select `validation_cut_ALL`, Effects
+  Library → OpenFX → ResolveFX Texture → **Film Grain**, drag onto a new serial node. **Not
+  yet done by human hands this session** — this is the one remaining "must be done through
+  the GUI, exactly like Windows" step before the edit can be called fully validated.
+
+### Power: this rig's VR power-management setup doesn't know Resolve exists
+
+`reverb-g2`'s `vr-power-watchdog.service` (see that repo's `docs/68`) only treats a
+`monado-service` process or a live Proton game tree as "active" — confirmed live that a
+running Resolve process does **not** trigger it: while Resolve was open and in active use
+this session, the box sat at `gpu power: 100 W of 250 W max (40%)`, `cpu governor:
+powersave`, `cpu epp: power`, `cpu boost: 0` — the watchdog's idle floor, the whole time.
+
+- **New tool**: [pipelines/resolve-power/resolve_power.py](pipelines/resolve-power/resolve_power.py)
+  — a self-contained Python port of the same idea as `reverb-g2`'s
+  `vr-power-setup.sh`/`vr-power-watchdog.py` (not a fork of that code, no code dependency on
+  that repo — see the script's own docstring). `report` needs no root; `--apply`/`--saver`/
+  `--restore` mirror the bash script's mechanics; `--watch` is the practical one: it stops
+  `vr-power-watchdog.service` for the duration (if present/active — degrades gracefully if
+  not), applies full performance the moment a `resolve` process is detected, and restores +
+  restarts the VR watchdog when Resolve exits or on Ctrl+C. **This is a manual, run-when-
+  validating tool, not a new systemd service** — `reverb-g2`'s own watchdog keeps running
+  independently the rest of the time, per the user's explicit call to keep the two projects
+  decoupled.
+- **Measured, not assumed, whether forcing full power is worth it**: rendered the same
+  4-clip timeline (H.264 NVIDIA/NVENC, 8030 frames) as a straight cut with no grading —
+  1 rep at the watchdog's `saver` floor (100W/powersave), 3 reps at full `--apply`
+  performance (250W/performance):
+
+  | power state | rep1 | rep2 | rep3 |
+  |---|---|---|---|
+  | saver (100W, powersave) | 16.75s | — | — |
+  | performance (250W, performance) | 15.76s | 17.70s | 26.29s |
+
+  The spread *between* the three performance-mode reps (15.8s–26.3s) is far larger than the
+  saver-vs-performance gap. **For a light cut-only render like this one, forcing full power
+  showed no measurable export-speed benefit** — matches the same "heat without frames"
+  pattern `reverb-g2`'s `docs/48-gpu-power-waste-landscape.md` already documented for
+  CPU/pacing-bound VR workloads: more watts doesn't help *export throughput* when something
+  else is the bottleneck.
+
+  **Correction, flagged by the user immediately after this result**: that finding only
+  covers batch export speed, and export speed is the wrong thing to optimize for here.
+  **Quality and frame consistency during actual interactive work (scrubbing, live playback
+  while grading) is what matters, and losing even a single frame there is a real cost, not
+  a benchmark footnote** — this is the exact same principle `reverb-g2`'s own
+  `vr-power-setup.sh` states as its reason for existing: "anything that can add latency
+  non-deterministically -- a governor ramping, a link entering a low-power state -- can
+  produce [a dropped frame], and none of it is visible in an average." A batch render's
+  total wall time hides exactly this: it doesn't care if frame 400 took 3x longer than
+  frame 401 while a governor spun up, only that the whole job finished. Live playback and
+  scrubbing do care, every frame, in a way this sweep never measured. **Revised
+  recommendation: default to `--watch` for the whole time Resolve is open for real
+  editing/grading, not just exports** — the interactive-smoothness risk of running
+  under-clocked outweighs the (already-shown-to-be-small-to-nil) export-speed cost of
+  running at full power, especially given `reverb-g2`'s own separate finding that idle GPU
+  draw is *identical* at 100W-capped vs. uncapped (both 19.9-19.8W) — so there is no real
+  power being "saved" by staying capped during a session anyway, only spike protection at
+  true rest is given up. Batch-export-only sessions (e.g. an unattended overnight queue)
+  are the one case where the original light-render finding above still applies as-is. Worth
+  re-running the export-speed sweep once the Film Grain node is in the graph, but as a
+  secondary data point, not the deciding one.
+- **NVIDIA settings recap for this rig** (cross-referenced from `reverb-g2`, which has done
+  the deep measurement work): persistence mode should stay **exactly as-is, never toggled**
+  by anything Resolve-related — `reverb-g2` found toggling it risks a modeset on the
+  desktop monitor, which lives on the same GPU as everything else here (`resolve_power.py`
+  inherits this rule, same as the bash script it's modeled on). The GPU's efficiency knee
+  is around 60% power on this specific card per `reverb-g2`'s own sweep methodology
+  (genuinely GPU-bound workloads only — Quake II RTX, not the pacing-bound VR case) — worth
+  keeping in mind if a future heavier Resolve render sweep shows a real GPU-bound curve
+  instead of today's noise-dominated one.
+- **`prepare_for_resolve.py` now prefers GPU (NVENC) over CPU by default**, per explicit
+  direction this session ("tratá de siempre usar GPU, CPU solo si hace mucha falta,
+  alertando al usuario"): `--video-codec` defaults to `h264_nvenc` when this machine's
+  `ffmpeg` build has it (confirmed present: `h264_nvenc`, `hevc_nvenc`, `av1_nvenc`), falling
+  back to CPU `libx264` only if NVENC genuinely isn't available, with an explicit `WARNING`
+  printed to stderr when that fallback happens — not a silent downgrade. (Didn't actually
+  trigger a video transcode in this session's real run — all 10 source files were already
+  H.264/HEVC, safe to stream-copy — so this only affects footage that genuinely needs
+  re-encoding.)
+
+### Disk, again
+
+`/home/iam/Videos` is now at **87% (28G free)**, down from 85%/32G free two sessions ago —
+the ~940MB of prepped validation sources (`~/Videos/resolve_validation_sources/`) is most of
+that delta. Kept, not cleaned up, since it's real validated output feeding the still-open
+`resolve_linux_validation` project, not throwaway test data (the actual throwaway renders —
+`x11_cuda_retest/`, `power_sweep_test/` — were deleted after verification, as before). Worth
+a real prune pass if this keeps climbing.
+
+### Effect-by-effect API + performance map — started, not finished
+
+The Film Grain gap above raised the real question (asked directly this session): which
+Resolve effects are actually scriptable at all, and of those, which are GPU-heavy
+(especially the AI-driven ones) vs. lightweight/CPU-bound? First real pass at mapping it,
+via the MCP's own source (`src/granular/timeline_item.py`) rather than guessing from the
+GUI:
+
+- **Scriptable, dedicated API methods (not the generic OFX-add gap)** —
+  `TimelineItem.Stabilize()`, `.SmartReframe()`, `.CreateMagicMask()` /
+  `.RegenerateMagicMask()`, plus the audio side (`transcribe_audio`, voice isolation
+  get/set). These are real Resolve scripting API methods, not MCP-invented wrappers.
+- **Measured, not assumed**: called `Stabilize()` on the `validation_cut_ALL` compound
+  clip (8030 frames) and polled `nvidia-smi` every 0.5s for the duration. **Confirmed
+  genuinely GPU-bound**: GPU utilization jumped from idle 0% to 47-54%, SM clock from
+  210MHz (P8 idle) to 1980MHz, power draw to ~104-110W, over a **28.59s** call —
+  real motion-analysis compute, not a metadata-only flag flip. (Minor API quirk noted in
+  passing: `GetProperty("StabilizationEnable")` read back `None` immediately after a
+  successful `Stabilize()` call returning `True` — worth checking whether that property
+  needs the GUI's Inspector panel open/refreshed to reflect, or is a genuine read gap, next
+  time this is touched.)
+- **Confirmed NOT scriptable via a dedicated method** (same class of gap as Film Grain,
+  would need the generic OFX-add path that doesn't exist): Super Scale (AI upscale), Speed
+  Warp (AI-based optical-flow retiming), Temporal/Spatial Noise Reduction. These are the
+  "denoise via GPU" and "scaling" cases flagged this session — real, GPU/AI-heavy, but GUI-
+  only for now unless a pre-built `.drx`/PowerGrade template turns out to carry them through
+  `graph.apply_grade_from_drx` (not yet tried).
+- **Not yet mapped at all**: the rest of `timeline_item_color`'s 35 actions, `fusion_comp`'s
+  41, and every plain linear/CPU-side operation (crop, pan/zoom/transform, basic primaries,
+  transitions) as a deliberate lower-GPU-load comparison point against the AI-driven ones
+  above.
+- **The real ask, for a future session**: a repeatable per-effect benchmark harness —
+  trigger each scriptable effect (or document as GUI-only where it isn't), poll
+  `nvidia-smi` (util/power/clock) and CPU governor state throughout, log wall time +
+  samples to a structured file (CSV or JSON lines, one row per effect per run), and treat
+  it as a real regression/coverage suite for "does the API still do what it says" — not
+  just a one-off number like today's single `Stabilize()` sample. Today's pass is the seed
+  of that (methodology proven, one real data point), not the harness itself.
+
+### Still open
+
+- **Manual Film Grain application** to `validation_cut_ALL` in the GUI (see above) — the
+  one step that needs a human at the Color page.
+- **Re-run the power sweep with real grading in the node graph**, once grain is applied —
+  today's result only rules out "worth it for light cuts," not the heavier case.
+- **Build the effect-by-effect performance benchmark harness** described above — this
+  session only proved the methodology on one effect (`Stabilize()`).
+- **Full hands-on edit/grade/export verification** by the user, end to end on
+  `resolve_linux_validation` — everything above is scripted/API-verified, which is real
+  signal but is explicitly not the same bar as a human actually editing (see "Why this
+  matters" at the bottom of this doc).
 
 ## Official requirements vs. this rig
 
