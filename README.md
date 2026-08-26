@@ -36,6 +36,10 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   everything found running it for real (see "Status" and the session logs below).
 - **[MCP-CAPABILITIES.md](MCP-CAPABILITIES.md)**: the full tool/action catalog for
   AI-driven control of Resolve via its scripting API, live-probed against a real instance.
+- **[PERFORMANCE.md](PERFORMANCE.md)**: actionable hardware-performance guide for this
+  rig specifically — storage (the big one: the current Media Storage path sustains only
+  ~46MB/s write, ~35x slower than the NVMe mount sitting unused), RAM, cache placement,
+  proxy workflow, VRAM, zram/swap. Not a session log — the summary to act on.
 - **[pipelines/raw-highlight/](pipelines/raw-highlight/)**: a standalone, tool-agnostic
   guide + working ffmpeg/Python implementation for turning a RAW-heavy event shoot (photos,
   plus any RAW video clips) into a finished highlight video. Doesn't require Resolve at
@@ -52,6 +56,17 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   reports back to minimum watts otherwise — because the sibling `reverb-g2` project's own
   power watchdog only reacts to VR/game activity, not Resolve. See "Session update: real
   project build" below for why this exists and what the measured payoff actually is.
+- **[pipelines/effect-benchmark/](pipelines/effect-benchmark/)**: two Python tools —
+  `effect_benchmark.py` (per-effect GPU/timing, e.g. `Stabilize()`/`SmartReframe()`) and
+  `render_benchmark.py` (per-delivery-profile render timing/GPU load) — built to answer
+  "what does this cost on this GPU" for real, one JSON-lines record per run, not a
+  one-off measurement. See "Effect-by-effect benchmark harness" and "Render-profile
+  benchmark" below.
+- **[pipelines/resolve-backup/](pipelines/resolve-backup/)**: a self-contained Python tool
+  that snapshots Resolve's own project files (Disk Database) and user config/Fusion/
+  Fairlight state — ported from the same idea as `reverb-g2`'s `backup-steam-config.sh`
+  (timestamped `cp -a`, kept outside git, warns if the live app is running). On-demand,
+  not wired into cron/systemd yet.
 
 ### Guide backlog — not built yet, tracked so it isn't lost
 
@@ -122,6 +137,39 @@ doesn't ship a native `.deb`, and doesn't officially support Debian at all (see
   (`~/resolve-install/extract/`) was deleted once both packages were confirmed installed
   and working — nothing downstream needs it. The MCP checkout (`~/resolve-install/davinci-resolve-mcp/`,
   ~5.7GB incl. venv) was kept, it's a live install, not build cruft.
+
+## Current known limitations on Linux (quick reference)
+
+One table, so nobody has to re-read the whole session log to know what's actually broken
+right now vs. what has a known workaround vs. what's a hard hardware/vendor ceiling. Full
+investigation and evidence for each row lives in the section named in "Doc" — this is a
+summary, not the source of truth; if a row here ever disagrees with its own section below,
+the section wins. Two big items that used to be here are gone because they got physically/
+structurally fixed, not just worked around: **RAM** (was 15GB vs. the 32GB official
+minimum — resolved by a hardware upgrade to 31GB, see "Session update: RAM added...") and
+the **render livelock** (was reliably reproducible — root-caused and fixed, see below).
+
+| Limitation | Mitigation | Doc |
+|---|---|---|
+| **AAC audio decode/encode unsupported on Linux, any Resolve edition** | Transcode audio to PCM before import (`ffmpeg -c:v copy -c:a pcm_s16le`, or the full `prepare_for_resolve.py` pipeline for a whole directory) | "Codec support on Linux" |
+| **H.264/HEVC decode/encode requires Studio + NVIDIA GPU — no CPU/software fallback on Linux** | Use Studio (not Free) with a working NVIDIA GPU path (see the CUDA/GPUDetect row below); if that's not available, pre-transcode to DNxHR with `ffmpeg` or the community `resolve_convert.sh` tool | "Codec support on Linux", "The bigger finding: H.264/H.265 aren't even in this install's render-codec list" |
+| **GPUDetect fails to correlate CUDA under GNOME-on-Wayland / XWayland-rootless → silently falls back to OpenCL → NVENC codecs missing from render list → render pipeline livelocks** | Log into the **GNOME on Xorg** session, then do a **full machine reboot** (switching session type alone, without a reboot, is not enough) — confirmed reproducible fix across two independent reboots so far | "Session update: Xorg + reboot — render livelock RESOLVED", "Session update: fresh reboot re-confirms the CUDA/X11 fix" |
+| **Scripting API connection (`dvr.scriptapp('Resolve')`) blocks indefinitely while Resolve's GUI is mid-playback loop** | Make sure playback is stopped before any script/MCP call connects; no way to detect this from the API side ahead of time, the call just never returns | "Session update: fresh graphical session, playback retest" |
+| **Blind GUI automation (`xdotool`/`import -window`) needs the window's on-screen offset added to click coordinates by hand, or clicks silently land on the wrong widget** | Get the real offset via `xdotool getwindowgeometry` or the window's `import -window` capture position before sending any `mousemove`; prefer the scripting API over blind clicks wherever an API method exists | "Blind GUI automation notes" (in "Session update: fresh graphical session, playback retest") |
+| **No scripting-API method to add an OFX/ResolveFX filter (e.g. Film Grain) to a node graph** | Manual GUI step: Color page → select the clip/compound clip → Effects Library → OpenFX → drag the effect onto a node | "Real workflow, driven entirely through the scripting API" |
+| **`CreateMagicMask()` does nothing without prior human clicks on the subject** | A human clicks the subject in the Color page's Magic Mask palette + presses Track Forward once; `RegenerateMagicMask()` can then be called via the API afterward | "Effect-by-effect benchmark harness, built and run" |
+| **Super Scale, Speed Warp, Temporal/Spatial Noise Reduction have no dedicated scripting method** (same class of gap as Film Grain) | GUI-only for now; untried fallback is a pre-built `.drx`/PowerGrade template via `graph.apply_grade_from_drx` | "Effect-by-effect API + performance map — started, not finished" |
+| **A failed/interrupted render doesn't recover cleanly via the API** — silent `None` returns, GUI dialogs block further calls with no signal, `Quit()` can hang on its own save-changes dialog | Only reliable recovery found is a full process kill + relaunch; treat an unexpected `None` as a probable blocked-dialog signal, not a clean failure | "The fork question — answered with a real workflow test, not just reading the code" |
+| **Render output path must be inside a registered Media Storage volume** — any other path fails with a blocking "Render Path Inaccessible" dialog | Register the target directory as Media Storage (Preferences/Project Settings) before pointing a render job at it | "Bundled plugins, and what third-party plugins are actually worth trying on Linux" |
+| **GNOME Mutter shows false "app not responding" dialogs during heavy Resolve activity on a RAM-tight box** | `gsettings set org.gnome.mutter check-alive-timeout 20000` (5s → 20s, applies live, no restart needed) | "Bundled plugins, and what third-party plugins are actually worth trying on Linux" |
+| **VRAM below official minimums for AI tools (16GB) and background render (12GB)** — this rig has 8GB | Hard hardware ceiling, no software fix; budget for it when planning AI-heavy or background-render workloads | "Official requirements vs. this rig" |
+| **Single-seat Resolve Studio license blocks any remote-viewing setup that needs a second Resolve instance** (e.g. desktop-side Remote Monitor viewer, "Resolve Live"-style collaboration) | Not actually needed here — the user decided to keep using the existing Moonlight/Sunshine full-desktop stream (already works well enough); a lighter `x11vnc`-scoped-to-the-window option was considered and explicitly not adopted. Free mobile app (iOS/Android, local-IP) remains the option if a phone/tablet viewer is ever wanted instead | "Remote monitoring while away from the rig — investigated, no Wine needed" |
+| **NDI is not built into Resolve** | Needs the paid third-party Nobe Display plugin (with a separate NDI-output upgrade); skip unless broadcast-quality streaming is specifically needed | "Remote monitoring while away from the rig — investigated, no Wine needed" |
+| **Third-party OFX plugin Linux support is inconsistent and vendor-specific** — e.g. Red Giant/Maxon ship no Linux build at all | Check per-vendor before relying on anything; Boris FX (Sapphire, Mocha Pro) is the one major suite confirmed with current official Linux builds | "Bundled plugins, and what third-party plugins are actually worth trying on Linux" |
+| **Blackmagic gates the Linux download behind a free-account login** — can't be scripted/automated | One-time manual login + download, tied to the Studio dongle's account | "The one manual step that can't be scripted around" |
+| **This rig's VR power-management watchdog doesn't recognize Resolve as "active"** — sits at its power floor (100W/powersave) for an entire Resolve session by default | Run `pipelines/resolve-power/resolve_power.py --watch` (needs root) to bracket the watchdog and hold full power only while Resolve runs; a real saver-vs-performance test found ~0% export-speed difference for a light cut but a real ~20%-faster/~2.4x-power trade for a GPU-bound AI op (`SmartReframe()`) — see that section for the actual numbers before deciding whether it's worth it for a given workload | "Power: this rig's VR power-management setup doesn't know Resolve exists", "Effect-by-effect benchmark harness, built and run" |
+| **Disk usage climbing** (87%/28GB free as of the last check) from validation sources and renders, and DNxHR exports run ~700GB/hour | Delete throwaway render/verification output right after `ffprobe` confirms it (already the practice here); prune validated sources once no longer needed; plan storage before any real DNxHR batch export | "Disk, again" |
+| **Blackmagic only officially supports Rocky Linux 8.6** — this rig runs Debian 13, unofficially | `makeresolvedeb` builds working `.deb`s from the official `.run` installer for Debian/Ubuntu-family systems; works in practice, just not vendor-supported | "Official requirements vs. this rig", "Install" |
 
 ## Session update (2026-08-25): fresh graphical session, playback retest
 
@@ -525,12 +573,322 @@ GUI:
   one step that needs a human at the Color page.
 - **Re-run the power sweep with real grading in the node graph**, once grain is applied —
   today's result only rules out "worth it for light cuts," not the heavier case.
-- **Build the effect-by-effect performance benchmark harness** described above — this
-  session only proved the methodology on one effect (`Stabilize()`).
 - **Full hands-on edit/grade/export verification** by the user, end to end on
   `resolve_linux_validation` — everything above is scripted/API-verified, which is real
   signal but is explicitly not the same bar as a human actually editing (see "Why this
   matters" at the bottom of this doc).
+
+## Session update (2026-08-25, later still): fresh reboot re-confirms the CUDA/X11 fix, effect benchmark harness built
+
+Machine was rebooted again (independent of the reboot that first fixed the livelock) and
+logged back into **GNOME on Xorg**. Before touching anything else, re-checked
+`GPUDetect`'s log line the moment Resolve launched: `NVIDIA GPU Driver: 595.71, supports
+CUDA 13.2`, `Matches: CUDA, NVML, OpenCL, XOrg`, `Compute API set to automatic, defaulting
+to CUDA.` — identical to the first fix. **This upgrades the finding from "fixed by one
+specific reboot" to "fixed by Xorg-session + reboot, reproducibly"** — worth knowing since
+this rig's GPU/driver state is otherwise easy to second-guess after every reboot.
+
+### Effect-by-effect benchmark harness, built and run
+
+Turned the prior session's one-off manual `Stabilize()` measurement into a real tool:
+[pipelines/effect-benchmark/effect_benchmark.py](pipelines/effect-benchmark/effect_benchmark.py).
+Connects via the scripting API, calls a named timeline-item effect, samples `nvidia-smi`
+throughout, and appends one JSON-lines record per run to
+`effect_benchmark_results.jsonl` — so results accumulate across sessions instead of
+living only in prose.
+
+**Real tooling bug caught and fixed before the numbers could be trusted**: the first cut
+sampled GPU state from a Python `threading.Thread` running alongside the effect call, and
+it silently produced exactly **1 sample regardless of the effect's actual duration** (1
+sample for a 1.2s call, 1 sample for a 19s call) — worthless data that looked plausible at
+a glance. Root cause: the scripting API's blocking calls go through `fusionscript.so`'s
+socket RPC, which does not release the GIL while blocked, so a same-process Python thread
+never gets CPU time until the call already returned. Fixed by sampling via `nvidia-smi`'s
+own `-lms` loop in a **separate OS subprocess** instead of a Python thread — a real
+process's internal timing isn't subject to our interpreter's GIL at all. **Lesson for
+anyone benchmarking through this scripting API from Python: don't trust a same-process
+sampling thread's cadence during a blocking call — verify sample count scales with wall
+time, or use a subprocess-based sampler from the start.**
+
+This pass was run deliberately **without** forcing performance mode — the watchdog's
+saver floor (100W/powersave, per `resolve_power.py`) was left exactly as-is, per explicit
+direction this session, since forcing full power for benchmarking would have begged the
+"is it worth it" question rather than answering it:
+
+| effect | wall time | GPU samples | GPU util max | power max | SM clock max | note |
+|---|---|---|---|---|---|---|
+| `Stabilize()` (2nd call, same clip) | 1.5s | 3 | 8% | 57.9W | 1770MHz | already stabilized from the prior session — see below |
+| `SmartReframe()` | 19.5s | 39 | **96%** | **100.1W** | **2010MHz** | genuinely GPU-bound |
+| `CreateMagicMask()` | 0.03s | 1 | 6% | 57.7W | 1770MHz | `needs_hitl` — no clicks placed, as expected |
+| `RegenerateMagicMask()` | 0.02s | 1 | 4% | 57.8W | 1770MHz | nothing to regenerate, consistent with the above |
+| `GetVoiceIsolationState()` / `SetVoiceIsolationState()` | ~0.001-0.5s | 0-1 | — | — | — | instant metadata get/set, round-trips correctly (verified `isEnabled`/`amount` set then read back, then reset to off) — **not itself GPU work**, presumably deferred to playback/render |
+
+Two real findings beyond "the harness works":
+- **`Stabilize()` on an already-stabilized clip is a fast no-op, not a re-analysis** — the
+  1.5s/3-sample result here is nothing like the original session's genuine 28.6s/GPU-bound
+  pass on the same clip before it had ever been stabilized. Don't read a fast repeat call
+  as evidence stabilization got cheaper; it means the clip already had it applied.
+- **`SmartReframe()` boosted the GPU to its full 2010MHz SM clock and 100W (the watchdog's
+  own cap) even while the CPU governor stayed `powersave` and the GPU was never taken out
+  of the watchdog's capped power state.** For a single ~20s GPU-bound call, the power cap
+  didn't stop it from reaching real GPU load.
+
+**Follow-up, done at the user's explicit request right after the table above**: applied
+`sudo resolve_power.py --apply` (250W/100%, `performance` governor, boost on) and
+re-ran the same two effects for a real saver-vs-performance comparison, not just the
+single-state pass above. Unlike `Stabilize()`, **`SmartReframe()` turned out NOT to
+cache/no-op on a repeat call** — the second call still did a real ~89-96%-util GPU pass
+both times, which is what makes this a fair apples-to-apples comparison (the `Stabilize()`
+repeat, by contrast, stayed a fast no-op at full power too — 1.0s vs. 1.5s, both
+non-signals, not included as a real comparison):
+
+| effect | power state | wall time | GPU util max | power draw max | SM clock max |
+|---|---|---|---|---|---|
+| `SmartReframe()` | saver (100W cap, powersave) | 19.5s | 96% | 100.1W | 2010MHz |
+| `SmartReframe()` | performance (250W cap) | **15.5s** | 89% | **239.8W** | 1995MHz |
+
+**~20% faster wall time for ~2.4x the power draw, at essentially the same peak SM
+clock either way** (2010 vs 1995MHz — the 100W cap already let this card reach nearly
+its full boost clock for this workload; the extra power budget bought sustained
+throughput more than peak clock). Reads as a genuine, if modest, real speedup — not the
+"heat without frames" null result the earlier batch-export sweep found — but the
+watts-per-second-saved trade is steep. Consistent with `resolve_power.py`'s own
+recommendation to reserve full power for when it's actually needed (interactive
+scrub/playback, or a GPU-bound op like this one mid-session) rather than leaving it on
+by default: **worth the ~20% for an occasional ~15-20s AI-analysis call, not obviously
+worth it to hold 250W for an entire editing session on this evidence alone.** Power
+state left at `performance` after this test (the user's own call, not reverted
+automatically) — check `resolve_power.py` (no args, no root needed) before assuming
+which state the rig is in for any later measurement.
+- Confirms the "not yet mapped" list from the prior session's pass on `Stabilize()` alone —
+  `SmartReframe` joins it as confirmed genuinely GPU-bound; Magic Mask remains
+  confirmed-blocked-on-human-clicks (not a bug); voice isolation confirmed as a cheap
+  state toggle, decoupling "is this AI feature scriptable" from "is calling it GPU work."
+
+### Render-profile benchmark + bundled Blackmagic tools map
+
+Follow-up to the effect harness above, done at the user's request right after: the user
+hand-built a **new timeline ("Timeline 2")** with a different real grading effect on each
+of the same 4 clips, applied entirely through the GUI (this is exactly the class of
+operation the effect-benchmark harness confirmed has no scripting-API entry point):
+
+| Clip | Effect (node-graph tool name, via `GetToolsInNode`) | Actual variant (per the user, not visible via the API) |
+|---|---|---|
+| `11111_a.mkv` | Noise Reduction | **AI Ultra NR** — Neural Engine-based, the heavy variant |
+| `Actitud Feria 17_a.mkv` | Noise Reduction | **Temporal NR** — the classic algorithmic variant, lighter |
+| `DarkSpirit1025master_a.mkv` | **Film Grain** — the exact manual step flagged as still-open two sessions ago | — |
+| `Ice Queen Video_a.mkv` | Analog Damage | — |
+
+**Real gap confirmed, and sharper than first assumed**: the user flagged the two "Noise
+Reduction" instances are actually very different tools — one is **AI Ultra NR** (the
+Neural Engine/AI-model-based variant, part of the same bundled AI feature set as Magic
+Mask/Speed Warp), the other is plain **Temporal NR** (the classic algorithmic denoiser,
+no neural model involved). **The scripting API cannot distinguish this at all, not even
+at the tool-*name* level** — `GetToolsInNode` reported the generic string `"Noise
+Reduction"` for both, with no variant/parameter information; confirmed against this MCP's
+own `docs/notes/openfx-notes.md`, which states there is no general OFX
+parameter-inspection method exposed by the scripting API (same shape as the "can't add a
+tool" gap, just the read side of it — and worse than assumed, since even *which specific
+tool* is genuinely ambiguous from the API, not just its settings). **The only way to get
+this mapping at all was asking the user directly** — there is no API-only path to it.
+Given how different these two really are (AI/Neural-Engine-driven vs. a classic filter),
+treat the two rows above as **not comparable GPU-load-wise** even though they share one
+generic API-visible name — a future benchmark pass should test `AI Ultra NR` and
+`Temporal NR` as separate named entries once each can be triggered in isolation (neither
+has a dedicated scripting method the way `Stabilize()`/`SmartReframe()` do, so this still
+needs a human to apply each on its own test clip while the harness samples).
+
+**Render-profile benchmark**, via the new `render_benchmark.py` (reuses
+`effect_benchmark.py`'s subprocess-based `GpuPoller`, same reason: a Python thread can't
+sample during a blocking scripting-API call) — rendered this same 4-effect timeline
+(334.68s of assembled output) through three delivery profiles, **all done at forced full
+performance power (250W/`performance`, applied by the user for this test)**, not the
+saver floor used for the earlier `SmartReframe()` comparison:
+
+| preset | wall time | GPU util (max/avg) | power max | SM clock max | output size |
+|---|---|---|---|---|---|
+| H.265 Master | 173.0s | — (samples lost, see below) | — | — | 496.8MB |
+| H.264 Master | 178.6s | 100% / 92.4% | 250.1W | 1995MHz | 760.0MB |
+| ProRes 422 HQ | 200.6s | 100% / 79.8% | 249.6W | 2010MHz | 4442.5MB |
+
+**Real tooling failure caught mid-run, worth documenting so it isn't repeated**: the
+first attempt ran all three presets in one `render_benchmark.py` invocation under a
+300s shell `timeout` — too short. The H.265 Master render (173s) actually completed and
+had its record built, but the process was killed by the timeout partway through the
+*second* preset before Python's buffered file write for the first record ever hit disk
+(`f.write()` without `f.flush()` — a `timeout`-driven `SIGKILL` doesn't give buffered I/O
+a chance to flush). **Fixed**: added an explicit `f.flush()` after every JSONL write in
+`render_benchmark.py`. The H.265 Master row above was reconstructed by hand from
+`GetRenderJobStatus` (job survived and kept rendering server-side even after the killed
+script's own polling loop died — Resolve's render doesn't depend on the calling script
+staying alive) and `ffprobe` on the still-present output file, which is why it's missing
+GPU samples — a live spot-check mid-render did catch 95% util / 170.75W / 1980MHz,
+consistent with the other two rows, just not a full time series. H.264 Master and ProRes
+422 HQ were re-run individually afterward with the fix in place and have full data.
+
+**Takeaway**: this timeline — 4 real GPU-heavy grading effects on ~5.6 minutes of
+footage — pushes the GPU to 100% peak on every profile tested, a genuinely different
+load shape than the earlier trivial cut-only renders (1.2s ProRes, no grading) or the
+single-effect `SmartReframe()` call. ProRes's lower average util (79.8% vs. H.264's
+92.4%) despite being the slowest wall-clock likely reflects CPU-side ProRes encode work
+competing for the pipeline rather than the GPU being less busy overall — not yet
+root-caused further.
+
+**Power sweep on this exact heavy timeline, closing out the "still open" item from two
+sessions ago** — H.264 Master re-rendered at the watchdog's `saver` floor (100W cap) for
+a clean comparison against the 250W row above. Had to stop `resolve_power.py --watch`
+first (it was running, and immediately re-applies `performance` the moment it sees a
+`resolve` process — fighting any attempt to measure `saver` state while Resolve is
+open; the user paused it by hand for this test, restart it separately if wanted going
+forward):
+
+| power state | wall time | GPU util (max/avg) | power max | SM clock max |
+|---|---|---|---|---|
+| saver (100W cap) | 272.1s | 100% / 89.9% | 100.3W | 1935MHz |
+| performance (250W cap) | 178.6s | 100% / 92.4% | 250.1W | 1995MHz |
+
+**~34% faster at full power for this real 4-effect grading timeline** — a bigger real
+speedup than the single-effect `SmartReframe()` comparison found (~20%), consistent with
+more/longer sustained GPU-bound work benefiting more from full power than one short
+call. Same conclusion as before, more strongly confirmed now: **worth full power for a
+real export of a heavily-graded timeline like this one, matches `resolve_power.py`'s own
+recommendation to stay in performance for the actual working session rather than only
+exports** — the watts-per-second-saved trade from the earlier single-effect test holds
+up as a real, not marginal, effect at this heavier load.
+
+### Bundled Blackmagic tools beyond the main app, and "can we run Resolve's own benchmark on Linux"
+
+Asked directly this session: what other tools ship with this Studio install, and is there
+an official way to benchmark Resolve itself on Linux instead of only this repo's own
+harness. Answer: **no official full-pipeline benchmark exists for Linux**, but one real,
+usable piece does:
+
+| Tool | Location | What it is |
+|---|---|---|
+| `TestIO` | `/opt/resolve/bin/` | **Real Blackmagic disk-I/O benchmark, native Linux CLI** — `TestIO <path> <frameSizeMB> <numFrames> <threads> <keepCpuBusy> <useDirectIO>`. Directly relevant to this repo's own "DNxHR ≈ 700GB/hour, plan storage accordingly" note. |
+| `BlackmagicRAWSpeedTest` | `/opt/resolve/BlackmagicRAWSpeedTest/` | Real BRAW decode-speed benchmark, bundled — but **GUI-only** (Qt app, no CLI/headless flags found), not scriptable. |
+| `BlackmagicRAWPlayer` | `/opt/resolve/BlackmagicRAWPlayer/` | Standalone BRAW viewer, same GUI-only shape. |
+| `ShowDpxHeader` | `/opt/resolve/bin/` | CLI DPX file header dumper. |
+| `sqlite3` | `/opt/resolve/bin/` | Bundled SQLite CLI — useful for inspecting Disk Database project files directly. |
+| `VstScanner` | `/opt/resolve/bin/` | Fairlight VST plugin scanner. |
+| `OFXLoader` | `/opt/resolve/bin/` | OFX plugin load/validate utility. |
+| `DaVinci Control Panels Setup`, `Fairlight Studio Utility` | own dirs | GUI config tools for Blackmagic control-surface/audio hardware — not relevant, no such hardware on this rig. |
+| `BMDPanelDaemon`/`BMDPanelFirmware`/`run_bmdpaneld`, `DaVinciPanelDaemon` | `bin/` | Control-panel hardware daemons (already running as part of the base install, not user-facing tools). |
+| `gst-plugin-scanner` | `bin/` | GStreamer plugin discovery, bundled media-format support. |
+
+**Third-party**: Puget Systems' PugetBench for DaVinci Resolve — the best-known
+community benchmark — is confirmed **Windows/Mac only**, current as of its "2.0" release
+(Feb 2026); Puget has stated Linux support is "planned, no ETA." Not a partial option
+either — the automation/scoring layer itself is platform-native, not just the launcher.
+
+**`TestIO` retried and got real numbers.** The first attempt (a `timeout`-wrapped run)
+printed nothing before being killed — root cause: `timeout` sends `SIGTERM` by default,
+and `TestIO` only prints its results at the very end of a natural run (five sequential
+phases: WRITE, READ, READ-reverse, RANDOM READ, READ-WRITE), so anything that kills it
+mid-run — `SIGTERM`, or just not enough wall-clock before its own `timeout` cap — loses
+the output entirely, not a partial result. Fixed by giving it a size small enough to
+finish well inside the wrapper's time budget:
+
+```
+TestIO /home/iam/Videos/testio_scratch/ 50 10 1 0 0   # 50MB x 10 frames, cached I/O
+  WRITE            2297.94 MB/s (45.96 FPS)
+  READ             3685.49 MB/s (73.70 FPS)
+  READ-reverse     9085.83 MB/s (181.70 FPS)
+  RANDOM READ      9144.50 MB/s (182.88 FPS)
+  READ-WRITE       3582.64 MB/s (35.82 FPS)
+```
+
+**Read the numbers above with a real caveat, don't take them as this disk's sustained
+hardware speed**: run with `useDirectIO=0` (cached I/O) against only 500MB total on a
+31GB-RAM box — the ~9GB/s READ-reverse/RANDOM READ figures are almost certainly page
+cache, not the physical disk.
+
+**Direct IO followed up — it wasn't actually hung, just slower than the first
+`timeout` window allowed**, same "only prints at the very end" characteristic as above
+biting twice. Confirmed by watching the process directly (`/proc/<pid>/status`, no
+`strace` installed on this rig) instead of assuming: it stayed in state `R` (running,
+not blocked) the whole time, and a longer-lived background run completed cleanly and
+printed real numbers:
+
+```
+TestIO /home/iam/Videos/testio_scratch/ 50 4 1 0 1   # 50MB x 4 frames, DIRECT IO (real hardware)
+  WRITE            46.43 MB/s (0.93 FPS)
+  READ            220.95 MB/s (4.42 FPS)
+  READ-reverse    226.09 MB/s (4.52 FPS)
+  RANDOM READ     184.08 MB/s (3.68 FPS)
+  READ-WRITE       74.63 MB/s (0.75 FPS)
+```
+
+**This is a real, important finding, not a benchmark curiosity**: `df -T` / `lsblk`
+confirm `/home/iam/Videos` (the only registered Media Storage volume, where every
+render/export in this repo has gone) sits on **`/dev/sda`, a Kingston SA400S37240G —
+a budget, DRAM-less SATA SSD with a small SLC write cache**. ~46 MB/s sustained
+Direct-IO write is consistent with this exact drive model's well-documented real-world
+behavior once that small cache is exhausted (a known characteristic, not a fluke or a
+misconfiguration). **This directly threatens the "DNxHR HQ 4K ≈ 700GB/hour" estimate
+earlier in this doc** — 700GB/hour needs ~194MB/s sustained write, and this drive's
+measured real ceiling is under a quarter of that. A long DNxHR 4K export on this rig, as
+currently configured, is a real risk of write-starving faster than the render pipeline
+can produce frames, not just a "budget for the space" storage-capacity concern.
+
+**Second drive exists but isn't a simple fix**: `/dev/nvme0n1` is a 1.8TB Kingston
+NVMe — but it's partitioned for a **Windows dual-boot** (EFI + Windows boot + three NTFS
+partitions), not a native Linux data drive. One NTFS partition is mounted at
+`/mnt/videos` via `ntfs-3g` (FUSE, real overhead vs. a native filesystem) — not
+currently registered as a Resolve Media Storage volume, and its real throughput hasn't
+been measured with `TestIO` yet. Moving render output there is a plausible win (even
+NTFS-3G overhead likely beats 46MB/s off NVMe hardware) but not yet measured, and
+reformatting any part of that drive for native Linux use would touch the Windows
+dual-boot — not something to do without deciding that trade-off deliberately. **A
+dedicated hardware-performance investigation (RAM, cache placement, proxy workflow, and
+this storage question specifically) was kicked off right after this finding** — see the
+next session update for what came back.
+
+**Bottom line**: for repeatable GPU/effect/render numbers, this repo's own
+`pipelines/effect-benchmark/` harness (built this session) is genuinely the closest thing
+to an equivalent Blackmagic/Puget don't provide natively on Linux — worth continuing to
+build out rather than waiting on either vendor.
+
+### Remote monitoring while away from the rig — investigated, no Wine needed
+
+Ask from the user: watch Resolve's progress from another computer while this session
+drives it, **without** spinning up the full Moonlight/Sunshine desktop-streaming setup
+this rig already uses for the unrelated `reverb-g2` VR project (heavyweight — full remote
+desktop, not needed just to *watch*). `/opt/resolve/bin/Blackmagic Remote Monitor` was the
+lead worth checking before assuming Wine is required — it's a native Linux binary bundled
+with this Resolve install (links `QWebSocket` + Qt), and it turns out to be exactly what
+it looks like: **no Wine involved anywhere in this**.
+
+- **`DaVinci Remote Monitor` is a real Resolve Studio feature, already installed, driven
+  from Resolve's own Workspace → Remote Monitoring menu** — it live-streams the Viewer as
+  low-latency H.264/H.265 (8/10-bit) to another device. Linux specifically requires an
+  RTX-series NVIDIA GPU (AMD/Intel unsupported on this feature) — this rig's 3060 Ti
+  qualifies. It supports a **local-IP mode with no Blackmagic Cloud account**
+  (Preferences → System → General → "Use Remote Monitoring without Blackmagic Cloud").
+  Launching the bundled binary standalone (no Resolve running) produced no output and no
+  listening port in a quick test — it's not meant to run outside Resolve, only from that
+  menu.
+- **Hard constraint that actually matters here: this rig has a single-seat Resolve Studio
+  license** — no second simultaneous Resolve instance can run anywhere else under it. This
+  rules out the *desktop* side of Remote Monitor: on Mac/Windows, viewing the stream on
+  another computer requires Resolve Studio running there too, which would need its own
+  license. **The only free, license-free viewer is Blackmagic's iOS/Android app**
+  ("DaVinci Remote Monitor" / "Blackmagic Remote Monitor" on the App Store/Play Store) —
+  fine if the "otra compu" can be a phone/tablet next to it, not usable as a literal
+  second-desktop viewer without buying another license.
+- **NDI is not built into Resolve** — it needs the paid third-party **Nobe Display**
+  plugin (with a separate NDI-output upgrade) to get an NDI stream out of Resolve at all.
+  Ruled out as a free/native option; only worth it later if a proper broadcast-quality
+  stream is worth paying for.
+- **Lighter alternative considered, not adopted: a VNC session scoped to just the Resolve
+  window** (e.g. `x11vnc` with a window-clip/geometry flag) — no Blackmagic feature
+  dependency, no second Resolve install/license needed, and lighter than a full desktop
+  capture. Not installed on this rig (`x11vnc` isn't present, would need `sudo apt
+  install`). **Decision, made by the user after weighing it: stick with the existing
+  Moonlight/Sunshine setup** — it already works well enough for this ("me cierra
+  bastante") and isn't worth swapping out just to save the weight of a full desktop
+  stream. Not a to-do anymore; don't re-propose x11vnc unless something about Moonlight
+  itself stops working for this use case.
 
 ## Official requirements vs. this rig
 
