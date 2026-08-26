@@ -309,6 +309,66 @@ collapse the section 1a reliability doc describes for a much larger (185GB) tran
 a single sharp one rather than a gradual taper — not tested this session, and not
 urgent given no real workflow here approaches that volume in one sustained write.
 
+### 1e. Fourth filesystem: btrfs — real write-performance cost, not a clean fix (2026-08-26)
+
+Same partition, reformatted again (`reformat_test_partition_btrfs.sh`), specifically
+because btrfs has a genuine, substantive argument beyond raw speed: **built-in data
+checksumming**, which would actually *detect* the kind of silent corruption this exact
+drive has a documented history of (section 1a) — ext4 and XFS have no such protection.
+Auto-detected `ssd` + set `discard=async` on mount, no manual tuning needed there.
+
+**Sequential write throughput dropped hard and consistently** — this is the headline
+result, confirmed by two different tools:
+
+| Test | ext4/XFS (for reference) | btrfs (default) |
+|---|---|---|
+| `TestIO` WRITE, 1GB | ~1,658-1,718 MB/s | **167 MB/s** |
+| `TestIO` WRITE, 2GB | ~1,642-1,650 MB/s | **222 MB/s** |
+| `fio` pure sequential write, 2G, iodepth 4 | (not run identically on ext4/XFS) | **810 MB/s** |
+| `fio` `editing` profile write (mixed 70/30) | 510-590 MB/s | 498 MB/s (in line) |
+| `fio` `manyfiles`/`gaming` reads | in line with ext4/XFS | in line with ext4/XFS |
+
+**Reads are essentially unaffected** — `manyfiles` and `gaming` land within noise of the
+ext4/XFS numbers. **It's specifically sustained sequential writes that pay a real cost**,
+and the size of that cost is inconsistent across tools/patterns (167-222 MB/s via
+`TestIO`'s single-file fresh-write pattern, 810 MB/s via `fio`'s own pure-write test,
+498 MB/s once reads are mixed in) — not a single clean number, but every measurement of
+a write-heavy sequential pattern came out well below ext4/XFS's ~1,650+ MB/s.
+
+**Tried the obvious fix, per the user's request to check FS-level performance
+tuning — `nodatacow`** (`chattr +C` on a test directory, disables copy-on-write *and*
+per-file checksumming for data written there — the same tuning commonly recommended for
+VM images/databases on btrfs). **Result: inconsistent, not a clean fix**:
+- `TestIO` WRITE stayed slow (184.86 MB/s) — barely different from the CoW-enabled
+  167-222 MB/s.
+- `fio`'s READ-WRITE mixed pattern improved a lot (1,077-1,141 → **1,763 MB/s**).
+- `fio`'s *pure* sequential write got *worse* with `nodatacow` (810 → **419 MB/s**) —
+  the opposite of the expected direction.
+
+**Honest conclusion: don't trust a single "nodatacow fixes it" story here** — the
+data doesn't support one. Whatever's actually costing performance on btrfs writes for
+this specific NVMe/access-pattern combination isn't cleanly explained by CoW alone;
+checksumming, `discard=async` interacting with O_DIRECT, or btrfs's transaction-commit
+behavior are all still-plausible unconfirmed contributors. Root-causing this further
+would need more controlled testing (isolate each mount option one at a time, more
+repeats to separate real effect from run-to-run noise) — not done this session.
+
+**Practical verdict, given the user's stated priority (performance first, backup/
+integrity handled separately)**: **btrfs is not the pick for this rig's write-heavy
+render/export/cache path** — the checksumming argument that motivated testing it is
+real, but the write-throughput cost is large, inconsistently mitigated by the standard
+tuning knob, and not worth it when the priority is explicitly performance. ext4 remains
+the recommendation from section 1c, now more confidently: it's the only one of the
+three native filesystems tested that never showed a comparable write-performance cliff
+in any test this session.
+
+**Filesystem bake-off closed out**: `nvme0n1p3` reformatted back to ext4 (trimmed,
+confirmed empty) as the final state — the same partition stays available at
+`/mnt/resolve_test` for any future benchmark, already on the filesystem this session's
+data says is the right default. `pipelines/disk-benchmark/` has the reusable
+scripts/tools for reopening this comparison later (e.g. against a real native partition
+if the dual-boot situation ever changes, or a different drive).
+
 ## 2. RAM: is 31GB enough, or worth going further?
 
 **Conditional, not urgent.** General Resolve benchmarking shows 32GB→64GB buys only
