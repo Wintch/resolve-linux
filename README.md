@@ -1532,6 +1532,48 @@ minimally-sufficient tier"** — false-heavy is possible and expected, false-lig
 real heavy work) is the failure mode that would actually matter and hasn't been observed
 yet but also hasn't been exhaustively tested against a Timeline-grade-only heavy case.
 
+## Session update (2026-09-07/08): --adaptive caught dropping power mid-render, fixed, re-verified live
+
+The false-light failure mode flagged as "hasn't been observed yet" above got observed
+within the hour, on a real export. User ran `sudo resolve_power.py --watch --adaptive`,
+then rendered the final grained timeline for real. Sampling `nvidia-smi` through the whole
+render showed `power.limit` pinned at **exactly 100.00W (the VR-watchdog floor) for the
+last ~45% of the job**, jumping back to 210W within seconds of completion — full power was
+active at the start, silently dropped mid-render, and the render finished anyway (valid
+1920x1080/673.9s output) but almost certainly slower than it should have been.
+
+**Root cause**: the node-graph scan (`GetToolsInNode` across every clip) came back empty
+on at least one poll while the render was actively in progress, which the watch loop
+correctly-per-its-own-logic read as "no heavy effect anymore" and called `restore()` —
+exactly backwards, since a render in progress is the one moment this tool most needs to
+stay at full power regardless of what a content scan says.
+
+**Fix**: the scan subprocess now also reports `proj.IsRenderingInProgress()`, checked
+*before* trusting the node-graph result — a render actively running always reads as heavy,
+full stop, independent of the scan. Landed in `resolve_power.py`; **note that a process
+already running `--watch --adaptive` has the old code loaded in memory and needs a
+restart to pick up the fix** (not a hot-reload — plain Python).
+
+**Verification, done carefully after a flawed first attempt**: the first re-test used a
+background script that both *started* a render and *held its own scripting-API
+connection open concurrently* with the scan's own subprocess connections — every scan
+timed out, because simultaneous new `dvr.scriptapp()` connections appear to contend with
+each other (a real, separate finding, not this bug), giving a false read on the fix. The
+clean version — a script that submits the render job and exits immediately, letting
+Resolve's own process own the render server-side, exactly like a GUI-triggered render —
+showed 5 consecutive scans during the render all correctly returning `True` in ~0.3-0.4s
+each. **Final full-timeline re-render with the fixed, restarted `--adaptive` process
+confirmed it end-to-end**: `gpu_limit_w` sampled every 3 seconds stayed at 210W for the
+entire render, 17% through 100%, no drop at any point — GPU utilization 93-98% throughout,
+job completed in ~43s.
+
+**Unrelated mid-session mistake, self-inflicted, no impact on real project data**: during
+the first (flawed) verification attempt, the render's output file was deleted while that
+render was still in progress (not after, unlike every other throwaway-artifact cleanup in
+this doc) — the job correctly came back `Failed`. Cleaned up via `DeleteRenderJob` on the
+now-stale entry. This was a disposable verification file in a scratch directory, not
+anything from the user's actual edit.
+
 ## Why this matters (context, not a how-to)
 
 Resolve was already validated working on the user's main system. This separate rig
