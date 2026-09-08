@@ -153,7 +153,7 @@ the **render livelock** (was reliably reproducible — root-caused and fixed, se
 |---|---|---|
 | **AAC audio decode/encode unsupported on Linux, any Resolve edition** | Transcode audio to PCM before import (`ffmpeg -c:v copy -c:a pcm_s16le`, or the full `prepare_for_resolve.py` pipeline for a whole directory) | "Codec support on Linux" |
 | **H.264/HEVC decode/encode requires Studio + NVIDIA GPU — no CPU/software fallback on Linux** | Use Studio (not Free) with a working NVIDIA GPU path (see the CUDA/GPUDetect row below); if that's not available, pre-transcode to DNxHR with `ffmpeg` or the community `resolve_convert.sh` tool | "Codec support on Linux", "The bigger finding: H.264/H.265 aren't even in this install's render-codec list" |
-| **GPUDetect fails to correlate CUDA under GNOME-on-Wayland / XWayland-rootless → silently falls back to OpenCL → NVENC codecs missing from render list → render pipeline livelocks** | Log into the **GNOME on Xorg** session, then do a **full machine reboot** (switching session type alone, without a reboot, is not enough) — confirmed reproducible fix across two independent reboots so far | "Session update: Xorg + reboot — render livelock RESOLVED", "Session update: fresh reboot re-confirms the CUDA/X11 fix" |
+| **GPUDetect fails to correlate CUDA under *-on-Wayland / XWayland-rootless → silently falls back to OpenCL → NVENC codecs missing from render list → render pipeline livelocks. This is a workaround, not a fix — Wayland itself is not, and cannot be, fixed from this repo.** | Log into any **native X11 session** and do a **full machine reboot** (switching session type alone, without a reboot, is not enough) — confirmed reproducible fix across two independent GNOME-on-Xorg reboots, and now confirmed **desktop-environment-agnostic**: a KDE Plasma-on-X11 session, first Resolve launch after a fresh boot, reproduced the identical good state (`supports CUDA 13.2`, `Matches: CUDA, NVML, OpenCL, XOrg`) with no extra dance needed — confirming the root cause is the X11-vs-Wayland protocol, not anything GNOME-specific. **Avoiding Wayland entirely, permanently, is the actual mitigation** — there is no known way to make CUDA detection work correctly under Wayland/XWayland-rootless on this rig; that would require Blackmagic fixing `GPUDetect` itself, not a client-side config change. If a future Resolve release fixes this, re-test before assuming it still applies. | "Session update: Xorg + reboot — render livelock RESOLVED", "Session update: fresh reboot re-confirms the CUDA/X11 fix", "Session update: KDE Plasma on X11 confirms the fix is DE-agnostic" |
 | **Scripting API connection (`dvr.scriptapp('Resolve')`) blocks indefinitely while Resolve's GUI is mid-playback loop** | Make sure playback is stopped before any script/MCP call connects; no way to detect this from the API side ahead of time, the call just never returns | "Session update: fresh graphical session, playback retest" |
 | **Blind GUI automation (`xdotool`/`import -window`) needs the window's on-screen offset added to click coordinates by hand, or clicks silently land on the wrong widget** | Get the real offset via `xdotool getwindowgeometry` or the window's `import -window` capture position before sending any `mousemove`; prefer the scripting API over blind clicks wherever an API method exists | "Blind GUI automation notes" (in "Session update: fresh graphical session, playback retest") |
 | **No scripting-API method to add an OFX/ResolveFX filter (e.g. Film Grain) to a node graph** | Manual GUI step: Color page → select the clip/compound clip → Effects Library → OpenFX → drag the effect onto a node | "Real workflow, driven entirely through the scripting API" |
@@ -1100,6 +1100,27 @@ coverage, 338/338 live-tested methods passing, a browser control panel, and a se
 independent server for offline `.drp`/`.drt`/`.drx` work. Forking is no longer the
 obvious next step; using it as-is and evaluating gaps first is.
 
+**Version check (2026-09-07): the installed build is over 100 releases behind.** This
+rig has v2.103.1 (installed 2026-08-25); upstream is at **v2.212.1** as of this check,
+released within hours of it — this project ships multiple releases per day some days.
+Skimming recent release titles shows a clear theme that wasn't present in 2.103.1: **an
+agent-safety layer** — e.g. "every destructive action carries a real risk rating"
+(v2.210.0), "`dry_run` refuses on actions that cannot honour it" (v2.211.0), risk rating
+tied to the actual graph a call targets (v2.212.0). Worth a real upgrade-and-retest pass
+before leaning on this MCP more heavily, given how much has landed since the version
+this repo's whole MCP evaluation above was based on — not done yet, flagging it here so
+it isn't lost. See [releases](https://github.com/samuelgursky/davinci-resolve-mcp/releases).
+
+Separately, the same author also ships **Bradford Post Assistant**
+(bradfordoperations.com/software/post-assistant) — a standalone desktop chat-window
+agent (not just an MCP server) that wires this same MCP together with an LLM and an
+extended "Bradford API" for higher-level post-production work: timeline organization,
+shot matching, delivery-spec validation, natural-language color direction, editorial
+pacing analysis, Fusion comp authoring. **Currently closed beta, access requested, not
+installed** — a different tier of tool than the MCP-server-plus-your-own-client setup
+this repo evaluated (a packaged agent vs. a protocol server), worth watching but not
+yet something to install and test here.
+
 ### What's installed
 
 - **Cloned to** `~/resolve-install/davinci-resolve-mcp` (scratch/build location, not
@@ -1311,6 +1332,100 @@ unverified enough that it needs a direct vendor-site check before spending time 
 None of this has been installed or tested on this rig — this is a compatibility survey to
 scope future effort, not a confirmation any of it works here specifically. No install-size
 figures were reliably found for any of these; expect to check per-vendor at install time.
+
+## Session update (2026-09-07): KDE Plasma on X11 confirms the fix is DE-agnostic
+
+The rig's desktop environment was switched to **KDE Plasma**, still on X11 (`sddm` →
+`startplasma-x11`, no `Xwayland` process). This was the first real test of whether the
+CUDA/GPUDetect fix documented above is actually about the **X11 vs. Wayland protocol**,
+as claimed, or was silently GNOME-specific and just never checked.
+
+Checked immediately after a fresh machine boot straight into the KDE-on-X11 session
+(`loginctl show-session` confirms `Desktop=KDE`, `Type=x11`), then launched Resolve for
+the first time on this boot — no prior Wayland-session dance needed this time, since the
+boot went straight into X11:
+
+- **`ResolveDebug.txt` shows the identical good signature**: `NVIDIA GPU Driver: 595.71,
+  supports CUDA 13.2`, `Matches: CUDA, NVML, OpenCL, XOrg`, `Compute API set to automatic,
+  defaulting to CUDA.` — same as every GNOME-on-Xorg run, no `-1.-1` CUDA version.
+- **NVENC codecs present**: live scripting-API connection (`dvr.scriptapp("Resolve")`,
+  version `21.0.4.5`) confirms `GetRenderCodecs("MP4")` lists `H.264 NVIDIA` and
+  `H.265 NVIDIA`, same as under GNOME.
+- **Real render test, same as the original livelock reproduction**: loaded the `test1`
+  project, rendered its timeline as H.264 NVIDIA MP4 via the API. Completed in **1.18s**
+  (`TimeTakenToRenderInMs: 1179`), no stuck completion percentage. Output verified with
+  `ffprobe`: valid 1920x1080 H.264 MP4, 6.67s, ~14MB — matches the GNOME-on-Xorg result
+  almost exactly.
+- License/dongle: splash screen logged `Checking Licenses` and proceeded straight into
+  the UI with no activation prompt and no license-related error in the log — same
+  behavior as every prior session, dongle (`lsusb`: Feitian `096e:0201`) still detected.
+
+**Conclusion: the fix is desktop-environment-agnostic, as the root-cause theory predicted.**
+It's the X11 protocol that matters for `GPUDetect`'s CUDA correlation, not anything
+GNOME-specific — KDE Plasma on X11 works identically, on the very first launch after a
+boot that went directly into an X11 session (no need to log into Wayland first). This
+closes the open question of whether "GNOME on Xorg" was actually the necessary condition
+or just the DE that happened to be tested first.
+
+**New footgun found in the process of cleaning up this test**: this render's target
+directory (`/home/iam/Videos/kde_x11_retest`) was deleted with `rm -rf` right after
+`ffprobe` verification, per this repo's usual throwaway-artifact convention — but the
+render job stayed in `test1`'s Render Queue (via the scripting API, jobs aren't
+auto-removed after completion) still pointing at that now-deleted path. Touching that
+queue afterward hit **"Render Path Inaccessible"** — not because the path was ever wrong,
+but because a *directory a persisted render job still references* got deleted out from
+under it. User re-created the directory by hand and re-rendered successfully (verified:
+same 1920x1080 H.264, 6.67s, ~14MB output). **Revised convention going forward**: when a
+render job created via the API is going to be left in the project's queue (the normal
+case — nothing in this repo's scripts calls `DeleteRenderJob`), delete only the output
+*file* after verification, not its containing directory — or call `DeleteRenderJob` on
+the job itself if the directory really needs to go.
+
+## Session update (2026-09-07, later): "no audio in Resolve" was the already-documented AAC bug, not routing
+
+User reported no audio during playback in the KDE-on-X11 session above. First hypothesis
+tried — **wrong, corrected by the user** — was system audio routing: this rig runs
+[Sunshine](https://github.com/LizardByte/Sunshine) (`app-dev.lizardbyte.app.Sunshine.service`,
+a Moonlight game-stream host, unrelated to Resolve but running on the same box for a
+separate use case) which creates its own null sinks (`sink-sunshine-stereo` etc.) and sets
+one as the **system default audio sink** — meaning normal desktop audio, Resolve included,
+was flowing into a virtual capture point with no physical output rather than real
+speakers. Loaded a `module-loopback` from `sink-sunshine-stereo.monitor` to the physical
+`alsa_output.pci-0000_07_00.4.analog-stereo` sink to fix that — real, and left in place
+since it's generally useful on a rig that's both a local workstation and a stream host —
+but **it did not fix the reported problem**, because that wasn't the actual cause.
+
+**Actual cause, per the user's own correction**: the loaded clips are AAC-audio MP4s —
+exactly [the already-documented, evidence-backed AAC-decode-unsupported-on-Linux
+finding](#codec-support-on-linux-official-corrected-from-the-original-assumption) from
+earlier in this same project. Confirmed via the Media Pool: all 10 real video clips in
+`test1`'s Bin 1 (from `/home/iam/Videos/oldback_nvme/`) showed `Audio Codec: AAC` — the
+two exceptions already in the bin (`Letov_pcm.mov`, `NoxArtFirstEdition2_pcm.mov`) were
+manually fixed in an earlier session, which is exactly why this pattern wasn't caught
+sooner: it had already been solved once, just not for every clip.
+
+**Fix applied, using this repo's own tool** (`pipelines/prepare-for-resolve/prepare_for_resolve.py`),
+per the user's explicit ask to keep it fast and lossless — copy the video stream, only
+re-encode audio:
+
+```
+python3 prepare_for_resolve.py /home/iam/Videos/oldback_nvme --output-dir /home/iam/Videos/oldback_nvme_pcm
+```
+
+- **9 of 10 clips**: video stream copied untouched (`-c:v copy`, confirmed via `ffprobe` —
+  same H.264/H.265 codec and level before/after), audio re-encoded AAC → `pcm_s24le`. Whole
+  batch finished in **2.9s** (stream copy is nearly free) — confirms the tool's default
+  behavior already matches "copy video, fix only audio" whenever the source video codec is
+  already safe, no flag needed.
+- **1 of 10** (`video_2025-12-31_14-53-07.mp4`) **could not be a pure stream copy**: it's
+  variable-frame-rate (~30.019fps average), which this tool always fixes by re-encoding
+  video to a snapped constant rate (30fps here) — unrelated to the audio fix, and not
+  avoidable without leaving genuinely broken timing in an editing timeline. Correctly
+  flagged in the tool's own dry-run reasoning before running.
+- All 10 outputs imported into `test1`'s Bin 1 via `MediaPool.ImportMedia()` — left
+  alongside the original AAC clips (same convention as the two pre-existing `_pcm.mov`
+  fixes), not replacing them, so nothing in the existing timeline breaks; the new
+  `Linear PCM`-audio versions are what should actually get cut in from here on.
 
 ## Why this matters (context, not a how-to)
 
