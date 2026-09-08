@@ -76,6 +76,33 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   automation, and a call on whether a non-Resolve equivalent is even worth attempting
   (this one leans "hard to fully replace outside Resolve" — multicam sync + AI speaker
   detection isn't a quick ffmpeg job — but worth confirming rather than assuming).
+- **Content-aware dynamic power (2026-09-07 idea, not built)**: extend
+  `pipelines/resolve-power/resolve_power.py --watch` from its current binary logic
+  (Resolve running at all -> full power, nothing running -> leave the VR watchdog alone)
+  to a three-tier one, decided by what's actually *on the current timeline*, not just
+  whether Resolve is open:
+  - **Heavy effect detected anywhere on the timeline -> full power**, automatically, no
+    manual `--apply` needed.
+  - **No heavy effect, but a real export/edit is happening -> today's existing capped
+    default is fine (the "0% export-speed difference for a light cut" finding above still
+    holds for this case).**
+  - **Genuinely trivial/short timeline -> could go *lower* than the current 100W floor**,
+    if there's headroom below it worth trading for less heat/noise on a box that's also
+    used for other things (reverb-g2, potential rental) — not measured yet whether the GPU
+    has a useful floor below what the VR watchdog already sets.
+  - **Detection is the solved part, not a guess**: `TimelineItem.GetNodeGraph().GetToolsInNode(i)`
+    (used live this session to find and disable an `OFX: Relight` node on `11111_a.mkv`
+    inside two minutes) lists every OFX/ResolveFX tool actually attached to every node of
+    every clip on a timeline — loop every video-track item, flag anything in a
+    known-heavy set (`Relight`, `Super Scale`, `Speed Warp`, `Noise Reduction`
+    variants, `Magic Mask` — see "Effect-by-effect API + performance map" for which of
+    these actually cost real GPU time on this rig) and decide the power tier from that,
+    before rendering even starts. **Known gap in this detection method**: it only sees
+    per-clip node-graph tools — it does **not** see a Timeline-level grade (Color page's
+    Clip/Timeline toggle) or a track-level effect, both confirmed to exist and to not show
+    up via `GetToolsInNode` (found live this session: a Timeline-wide Film Grain pass was
+    invisible to this exact check). Any real implementation needs to account for that blind
+    spot, not just trust a clean scan.
 
 Split out (2026-08-24) from an unrelated VR headset project (`reverb-g2`) on the same rig,
 where this had been accumulating as a side note.
