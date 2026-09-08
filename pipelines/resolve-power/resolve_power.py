@@ -98,16 +98,17 @@ if r is None:
 proj = r.GetProjectManager().GetCurrentProject()
 if proj is None:
     print(json.dumps({"error": "no project"})); sys.exit(0)
+rendering = proj.IsRenderingInProgress()
 tl = proj.GetCurrentTimeline()
 if tl is None:
-    print(json.dumps({"error": "no timeline"})); sys.exit(0)
+    print(json.dumps({"error": "no timeline", "rendering": rendering})); sys.exit(0)
 tools_found = []
 for t in range(1, tl.GetTrackCount("video") + 1):
     for it in tl.GetItemListInTrack("video", t):
         graph = it.GetNodeGraph()
         for i in range(1, graph.GetNumNodes() + 1):
             tools_found.extend(graph.GetToolsInNode(i) or [])
-print(json.dumps({"tools": tools_found}))
+print(json.dumps({"tools": tools_found, "rendering": rendering}))
 '''
 
 
@@ -120,7 +121,15 @@ def scan_timeline_for_heavy_effects(timeout: float = 6.0) -> bool | None:
     indefinitely while Resolve's GUI is mid-playback") to hang forever in exactly that
     state -- that must never be allowed to hang this script's own --watch loop.
 
-    Known blind spots, both found live the same session this was built:
+    **A render job in progress always reads as heavy, regardless of the node scan.**
+    Found live the same session this was built: while a real render job was running,
+    the node-graph scan below came back empty for several polls in a row (each one landing
+    on `elif heavy is False and is_full` in the watch loop) and dropped the GPU to its
+    100W floor *during the render itself* -- exactly backwards. `proj.IsRenderingInProgress()`
+    is cheap and, unlike a full node-graph walk, has no reason to race with the render
+    engine, so it's checked first and short-circuits straight to heavy=True.
+
+    Known blind spots, all found live the same session this was built:
     - This only sees per-clip node-graph tools (`TimelineItem.GetNodeGraph().GetToolsInNode()`).
       It does NOT see a Timeline-level grade (Color page's Clip/Timeline toggle) or a
       track-level effect -- both real, both confirmed to evade this exact check. A
@@ -132,6 +141,11 @@ def scan_timeline_for_heavy_effects(timeout: float = 6.0) -> bool | None:
       the conservative direction (a false "go full power" costs watts; a false "stay
       capped" costs a stutter), but it means disabling a heavy node without removing it
       won't bring this back down to the capped tier.
+    - The node-graph scan itself was observed to intermittently read as empty while a
+      render was actively in progress (the bug the `IsRenderingInProgress()` short-circuit
+      above exists to route around) -- treat a "no tools found" result taken *outside* of
+      an active render with some caution too; it has not been proven reliable under all
+      load, only under the idle/scrubbing case it was designed for.
     """
     env = {
         **os.environ,
@@ -150,6 +164,8 @@ def scan_timeline_for_heavy_effects(timeout: float = 6.0) -> bool | None:
         data = json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
         return None
+    if data.get("rendering"):
+        return True
     if "error" in data:
         return None
     tools = data.get("tools", [])
