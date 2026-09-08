@@ -1100,16 +1100,30 @@ coverage, 338/338 live-tested methods passing, a browser control panel, and a se
 independent server for offline `.drp`/`.drt`/`.drx` work. Forking is no longer the
 obvious next step; using it as-is and evaluating gaps first is.
 
-**Version check (2026-09-07): the installed build is over 100 releases behind.** This
-rig has v2.103.1 (installed 2026-08-25); upstream is at **v2.212.1** as of this check,
-released within hours of it — this project ships multiple releases per day some days.
-Skimming recent release titles shows a clear theme that wasn't present in 2.103.1: **an
+**Version check (2026-09-07): the installed build was over 100 releases behind — upgraded
+same day.** Rig had v2.103.1 (installed 2026-08-25); upstream was at **v2.212.1** at check
+time, released within hours of it — this project ships multiple releases per day some
+days. Recent release titles showed a clear theme that wasn't present in 2.103.1: **an
 agent-safety layer** — e.g. "every destructive action carries a real risk rating"
 (v2.210.0), "`dry_run` refuses on actions that cannot honour it" (v2.211.0), risk rating
-tied to the actual graph a call targets (v2.212.0). Worth a real upgrade-and-retest pass
-before leaning on this MCP more heavily, given how much has landed since the version
-this repo's whole MCP evaluation above was based on — not done yet, flagging it here so
-it isn't lost. See [releases](https://github.com/samuelgursky/davinci-resolve-mcp/releases).
+tied to the actual graph a call targets (v2.212.0). See
+[releases](https://github.com/samuelgursky/davinci-resolve-mcp/releases).
+
+**Upgrade done (2026-09-07), 178 commits, v2.103.1 → v2.212.1**: `git fetch` + `git merge
+--ff-only` (clean fast-forward, no conflicts) in `~/resolve-install/davinci-resolve-mcp`,
+stashing/reapplying one local `package.json` tweak (`allowScripts` entries for
+`better-sqlite3`/`sharp` native builds) across the merge. Then `pip install -r
+requirements.txt --upgrade` (venv), `npm install` at the repo root, and `npm install`
+inside `resolve-advanced/` — whose `node_modules` turned out to not actually be installed
+at all despite the original install notes above claiming both servers were set up; this
+upgrade is what surfaced that gap and fixed it. Verified, not just assumed: `scripts/doctor.py`
+reports `MCP server version: 2.212.1` and a live `Resolve scripting connection: DaVinci
+Resolve Studio 21.0.4.5` against the same running Resolve instance from the KDE-on-X11
+session above, all six AI extras still `[OK]`, `npm run smoke` passes, and
+`resolve-advanced`'s offline unit suite (`npm run test:libs`) passes 251/272 (21 skipped,
+env-gated) with zero failures. The two pre-existing `doctor.py` warnings about missing
+Codex/Claude-Desktop MCP config entries predate this upgrade and are about client wiring,
+not the server itself.
 
 Separately, the same author also ships **Bradford Post Assistant**
 (bradfordoperations.com/software/post-assistant) — a standalone desktop chat-window
