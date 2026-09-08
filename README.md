@@ -167,7 +167,7 @@ the **render livelock** (was reliably reproducible — root-caused and fixed, se
 | **NDI is not built into Resolve** | Needs the paid third-party Nobe Display plugin (with a separate NDI-output upgrade); skip unless broadcast-quality streaming is specifically needed | "Remote monitoring while away from the rig — investigated, no Wine needed" |
 | **Third-party OFX plugin Linux support is inconsistent and vendor-specific** — e.g. Red Giant/Maxon ship no Linux build at all | Check per-vendor before relying on anything; Boris FX (Sapphire, Mocha Pro) is the one major suite confirmed with current official Linux builds | "Bundled plugins, and what third-party plugins are actually worth trying on Linux" |
 | **Blackmagic gates the Linux download behind a free-account login** — can't be scripted/automated | One-time manual login + download, tied to the Studio dongle's account | "The one manual step that can't be scripted around" |
-| **This rig's VR power-management watchdog doesn't recognize Resolve as "active"** — sits at its power floor (100W/powersave) for an entire Resolve session by default | Run `pipelines/resolve-power/resolve_power.py --watch` (needs root) to bracket the watchdog and hold full power only while Resolve runs; a real saver-vs-performance test found ~0% export-speed difference for a light cut but a real ~20%-faster/~2.4x-power trade for a GPU-bound AI op (`SmartReframe()`) — see that section for the actual numbers before deciding whether it's worth it for a given workload | "Power: this rig's VR power-management setup doesn't know Resolve exists", "Effect-by-effect benchmark harness, built and run" |
+| **This rig's VR power-management watchdog doesn't recognize Resolve as "active"** — sits at its power floor (100W/powersave) for an entire Resolve session by default | Run `pipelines/resolve-power/resolve_power.py --watch` (needs root) to bracket the watchdog and hold full power only while Resolve runs. Whether it's worth it is workload-dependent, and the two real measurements taken so far disagree in magnitude: ~0% export-speed difference for a light cut, a real ~20%-faster/~2.4x-power trade for a GPU-bound AI op (`SmartReframe()`), and a **~25% faster full-timeline H.265 NVENC render** (225.8s -> 180.1s, same 16172-frame job, 100W capped vs 210W full) on 2026-09-07 — see the sections below for all three before assuming any single number generalizes | "Power: this rig's VR power-management setup doesn't know Resolve exists", "Effect-by-effect benchmark harness, built and run", "Session update: power-capped vs full-power render pacing, real timeline" |
 | **Disk usage climbing** (87%/28GB free as of the last check) from validation sources and renders, and DNxHR exports run ~700GB/hour | Delete throwaway render/verification output right after `ffprobe` confirms it (already the practice here); prune validated sources once no longer needed; plan storage before any real DNxHR batch export | "Disk, again" |
 | **Blackmagic only officially supports Rocky Linux 8.6** — this rig runs Debian 13, unofficially | `makeresolvedeb` builds working `.deb`s from the official `.run` installer for Debian/Ubuntu-family systems; works in practice, just not vendor-supported | "Official requirements vs. this rig", "Install" |
 
@@ -1440,6 +1440,59 @@ python3 prepare_for_resolve.py /home/iam/Videos/oldback_nvme --output-dir /home/
   alongside the original AAC clips (same convention as the two pre-existing `_pcm.mov`
   fixes), not replacing them, so nothing in the existing timeline breaks; the new
   `Linear PCM`-audio versions are what should actually get cut in from here on.
+
+## Session update (2026-09-07, later still): power-capped vs full-power render pacing, real timeline
+
+User was rendering `Timeline 1` (16172 frames, 1920x1080/24fps, H.265 NVIDIA, the same
+range used throughout this doc's render tests) for real, still under the power-floor state
+from "Power" above (GPU capped 100W of 210W). Asked for the pacing to be documented, then
+to re-measure after applying full power via `resolve_power.py`, to close out the power
+question with a real editing-load number instead of only the earlier light-cut/SmartReframe
+data points.
+
+**Capped (100W/210W, 48%)**: `Job 6` (same 16172-frame range, same codec/profile) completed
+in **225.847s** total (`TimeTakenToRenderInMs`) — 71.6 fps average, ~2.98x realtime. No
+phase-level breakdown for this run — the monitoring script was started after the job was
+already 28% in, so only the final total is solid; a repeat of this test should start
+watching *before* triggering the render, not after, to get a full curve on the capped side
+too.
+
+**Full power (`sudo resolve_power.py --apply`, GPU 210W/210W, CPU governor `performance`,
+boost on)**: `Job 7`, identical range/codec, completed in **180.095s** — 89.8 fps average,
+~3.74x realtime. **25.4% faster wall-clock than the capped run for the same export.** This
+time the watcher caught the job from frame zero, polling `GetRenderJobStatus` +
+`nvidia-smi` every 2s, giving a real phase-by-phase curve (16172 frames total):
+
+| Phase | Frames | Time | Effective fps | What's actually there |
+|---|---|---|---|---|
+| Opening section | ~1–2426 (0–15%) | ~10s (plus an ~8s pre-roll before progress starts moving — likely codec/GPU-context init, not render work) | fast | normal 1920x1080 h264/hevc source, matches timeline format |
+| **Complex scene** | ~2426–4528 (15–28%) | **143.7s** | **~14.6 fps** | see root cause below |
+| Rest of timeline | ~4528–16172 (28–100%) | 26.3s | ~443 fps | normal-format sources again |
+
+User's own live GUI read during the render ("la escena compleja va a 10-15fps, el resto a
+~500fps aprox, antes era menos, ~350 aprox") **matches this measured curve closely** —
+14.6fps and ~443-477fps bracket the 10-15 / ~500 estimate almost exactly, a good sign the
+scripting-API `CompletionPercentage` polling here tracks what's actually rendering, not
+just a coarse/lagged number.
+
+**Root cause of the "complex scene", found by cross-referencing the timeline against the
+Media Pool — it is not a power/GPU problem at all**: the two clips sitting in that frame
+range, `Ice Queen Video _a.mkv` (1152x1728) and `11111_a.mkv` (1080x1920), are **portrait
+sources at 25fps** being placed into this **1920x1080/24fps landscape timeline** — Resolve
+has to reformat/scale *and* frame-rate-conform them in realtime during render. That's a
+CPU/scaling-bound cost, which is exactly why more GPU wattage didn't fix it: the segment
+stayed the visible bottleneck under full power too, just inside an overall-faster render.
+**If this bottleneck specifically needs to go away, the fix is pre-conforming those two
+source clips (scale/pad to 1920x1080, conform 25→24fps) before cutting them in** —
+`prepare_for_resolve.py` doesn't currently do this (it only fixes bad audio/video codecs,
+VFR, and interlacing, not resolution/aspect/frame-rate mismatches against a target
+timeline) — a real gap to close if this pattern shows up again, not a bug in what exists.
+
+**Bottom line for "production ready"**: full power is a real, measured **~25% wall-clock
+win on a real mixed-content export**, on top of the light-cut/SmartReframe data points
+already in the "Power" section above — worth defaulting to `--watch` for any real export,
+not just AI-heavy operations. It does **not** fix a resolution/frame-rate mismatch bottleneck
+like the one found here; that needs fixing at the source-media level, independent of power.
 
 ## Why this matters (context, not a how-to)
 
