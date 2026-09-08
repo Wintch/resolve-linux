@@ -43,6 +43,18 @@ Usage:
                                          `resolve` process, --apply while it runs, --restore
                                          (and restart the watchdog if it was running) once
                                          Resolve exits or on Ctrl+C
+    sudo ./resolve_power.py --watch --adaptive
+                                         same bracket, but instead of unconditional full
+                                         power for the whole session, only go full while a
+                                         known-heavy OFX/ResolveFX effect is actually present
+                                         on the current timeline -- drop back to whatever was
+                                         there before (the VR watchdog's capped floor, in the
+                                         normal case) the moment it isn't anymore. See
+                                         "Content-aware dynamic power" in the parent repo's
+                                         README for the idea, the detection method, and its
+                                         known blind spots (a Timeline-level grade or a
+                                         track-level effect aren't visible to it) before
+                                         trusting this for anything that matters.
 
 Does NOT touch NVIDIA persistence mode, in either direction -- same reason as reverb-g2's
 script: toggling it has been observed to disturb this GPU's attached desktop monitor's
@@ -52,6 +64,7 @@ modeset, and this rig's only monitor lives on the same card Resolve renders with
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -63,6 +76,84 @@ WATCHDOG_UNIT = "vr-power-watchdog.service"
 STATE_DIR = Path("/var/lib/resolve-power")
 STATE_FILE = STATE_DIR / "saved-state"
 RESOLVE_PATTERN = "bin/resolve$"
+
+# OFX/ResolveFX tools known (from this repo's own effect-by-effect benchmarking, see
+# README's "Effect-by-effect API + performance map") to actually cost real GPU time on
+# this rig -- a live-detected `Relight` node is what motivated this feature.
+HEAVY_EFFECT_KEYWORDS = ("Relight", "Super Scale", "Speed Warp", "Noise Reduction", "Magic Mask")
+
+RESOLVE_SCRIPT_API = "/opt/resolve/Developer/Scripting"
+RESOLVE_SCRIPT_LIB = "/opt/resolve/libs/Fusion/fusionscript.so"
+
+_TIMELINE_SCAN_SCRIPT = '''
+import sys, json
+sys.path.append("/opt/resolve/Developer/Scripting/Modules/")
+try:
+    import DaVinciResolveScript as dvr
+except ImportError:
+    print(json.dumps({"error": "no DaVinciResolveScript module"})); sys.exit(0)
+r = dvr.scriptapp("Resolve")
+if r is None:
+    print(json.dumps({"error": "no connection"})); sys.exit(0)
+proj = r.GetProjectManager().GetCurrentProject()
+if proj is None:
+    print(json.dumps({"error": "no project"})); sys.exit(0)
+tl = proj.GetCurrentTimeline()
+if tl is None:
+    print(json.dumps({"error": "no timeline"})); sys.exit(0)
+tools_found = []
+for t in range(1, tl.GetTrackCount("video") + 1):
+    for it in tl.GetItemListInTrack("video", t):
+        graph = it.GetNodeGraph()
+        for i in range(1, graph.GetNumNodes() + 1):
+            tools_found.extend(graph.GetToolsInNode(i) or [])
+print(json.dumps({"tools": tools_found}))
+'''
+
+
+def scan_timeline_for_heavy_effects(timeout: float = 6.0) -> bool | None:
+    """True/False if the current timeline's clip node graphs were actually checked, None
+    if it couldn't be determined (Resolve unreachable, nothing open, or the call timed out).
+
+    Runs the actual scripting-API call in a subprocess with a hard timeout, on purpose:
+    `dvr.scriptapp('Resolve')` is documented (README: "Scripting API connection...blocks
+    indefinitely while Resolve's GUI is mid-playback") to hang forever in exactly that
+    state -- that must never be allowed to hang this script's own --watch loop.
+
+    Known blind spots, both found live the same session this was built:
+    - This only sees per-clip node-graph tools (`TimelineItem.GetNodeGraph().GetToolsInNode()`).
+      It does NOT see a Timeline-level grade (Color page's Clip/Timeline toggle) or a
+      track-level effect -- both real, both confirmed to evade this exact check. A
+      timeline that's only heavy at one of those levels reads as light here.
+    - `GetToolsInNode()` still reports a tool on a node that's been bypassed via
+      `SetNodeEnabled(i, False)` -- there is no `GetNodeEnabled()` to check the other
+      direction. This function has no way to tell "heavy tool present but bypassed" from
+      "heavy tool present and actually running", so it treats both as heavy. Deliberately
+      the conservative direction (a false "go full power" costs watts; a false "stay
+      capped" costs a stutter), but it means disabling a heavy node without removing it
+      won't bring this back down to the capped tier.
+    """
+    env = {
+        **os.environ,
+        "RESOLVE_SCRIPT_API": RESOLVE_SCRIPT_API,
+        "RESOLVE_SCRIPT_LIB": RESOLVE_SCRIPT_LIB,
+        "DISPLAY": os.environ.get("DISPLAY", ":0"),
+    }
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _TIMELINE_SCAN_SCRIPT],
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    try:
+        data = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        return None
+    if "error" in data:
+        return None
+    tools = data.get("tools", [])
+    return any(any(kw in tool for kw in HEAVY_EFFECT_KEYWORDS) for tool in tools)
 
 C_OK = "\033[1;32m"
 C_WARN = "\033[1;33m"
@@ -256,9 +347,20 @@ def restore() -> None:
     print("restored.")
 
 
-def watch(poll_interval: int = 10, gpu_limit_pct: int | None = None) -> None:
-    """Bracket the reverb-g2 watchdog (if present) and hold full performance for exactly as
-    long as a `resolve` process is alive. Manual, foreground tool -- Ctrl+C cleans up too."""
+def watch(poll_interval: int = 10, gpu_limit_pct: int | None = None, adaptive: bool = False) -> None:
+    """Bracket the reverb-g2 watchdog (if present) for as long as a `resolve` process is
+    alive. Manual, foreground tool -- Ctrl+C cleans up too.
+
+    Two modes:
+    - default: unconditional full performance for the whole session (the documented
+      recommendation for real editing/grading -- see the module docstring for why).
+    - `adaptive=True`: only go full while `scan_timeline_for_heavy_effects()` finds a
+      known-heavy OFX/ResolveFX tool actually on the current timeline; drop back to
+      whatever was there before (the VR watchdog's capped floor, normally) the moment it
+      isn't. Re-checked every `poll_interval` while Resolve runs. An uncertain scan
+      (Resolve mid-playback, no project/timeline open, timeout) leaves the current tier
+      alone rather than flip-flopping on a guess.
+    """
     need_root()
     was_active = watchdog_present() and watchdog_active()
     if was_active:
@@ -266,17 +368,25 @@ def watch(poll_interval: int = 10, gpu_limit_pct: int | None = None) -> None:
         watchdog_stop()
 
     cleaned_up = False
+    is_full = False  # only meaningful in adaptive mode; unused otherwise
 
     def cleanup(*_a) -> None:
         nonlocal cleaned_up
         if cleaned_up:
             return
         cleaned_up = True
-        print("\nrestoring previous power state...")
         if STATE_FILE.exists():
+            print("\nrestoring previous power state...")
             restore()
-        else:
+        elif not adaptive or is_full:
+            # non-adaptive: we always apply() before this point, so a missing STATE_FILE
+            # here would be a bug, not a real "nothing changed" case -- saver() is the
+            # correct floor to fall back to.
+            # adaptive-but-somehow-is_full: same bug case, same fallback.
+            print("\nrestoring previous power state...")
             saver()
+        # else: adaptive mode and we never applied full power -- nothing was ever
+        # changed, so there is nothing to restore. Leave CPU/GPU state exactly as-is.
         if was_active:
             print(f"restarting {WATCHDOG_UNIT}...")
             watchdog_start()
@@ -289,10 +399,28 @@ def watch(poll_interval: int = 10, gpu_limit_pct: int | None = None) -> None:
     while not resolve_running():
         time.sleep(poll_interval)
 
-    print("Resolve detected -> applying performance mode.")
-    apply(gpu_limit_pct)
+    if not adaptive:
+        print("Resolve detected -> applying performance mode.")
+        apply(gpu_limit_pct)
+        while resolve_running():
+            time.sleep(poll_interval)
+        print("Resolve exited.")
+        cleanup()
+        return
 
+    print("Resolve detected -> adaptive mode: scanning the timeline before deciding.")
     while resolve_running():
+        heavy = scan_timeline_for_heavy_effects()
+        if heavy is True and not is_full:
+            print("heavy effect found on the timeline -> applying full performance.")
+            apply(gpu_limit_pct)
+            is_full = True
+        elif heavy is False and is_full:
+            print("no heavy effect on the timeline anymore -> restoring capped state.")
+            restore()
+            is_full = False
+        elif heavy is None:
+            print("could not scan the timeline this round (Resolve busy / no timeline open) -- leaving power tier as-is.")
         time.sleep(poll_interval)
 
     print("Resolve exited.")
@@ -306,6 +434,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--saver", action="store_true", help="drop to minimum watts now")
     g.add_argument("--restore", action="store_true", help="restore the state saved before --apply")
     g.add_argument("--watch", action="store_true", help="bracket the VR watchdog and track a running Resolve process")
+    p.add_argument("--adaptive", action="store_true", help="with --watch: only go full power while a known-heavy OFX/ResolveFX effect is actually on the current timeline, instead of unconditionally for the whole session. See README's 'Content-aware dynamic power' section for the method and its blind spots before trusting this.")
     p.add_argument("--gpu-limit", type=int, default=None, metavar="PCT", help="cap GPU watts to this percent of max instead of 100%% (used by --apply/--watch)")
     p.add_argument("--poll-interval", type=int, default=10, help="seconds between checks in --watch (default: 10)")
     return p.parse_args(argv)
@@ -313,6 +442,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.adaptive and not args.watch:
+        sys.exit("--adaptive only makes sense together with --watch")
     if args.apply:
         apply(args.gpu_limit)
     elif args.saver:
@@ -320,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.restore:
         restore()
     elif args.watch:
-        watch(args.poll_interval, args.gpu_limit)
+        watch(args.poll_interval, args.gpu_limit, args.adaptive)
     else:
         report()
     return 0

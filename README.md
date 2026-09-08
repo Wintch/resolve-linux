@@ -76,33 +76,10 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   automation, and a call on whether a non-Resolve equivalent is even worth attempting
   (this one leans "hard to fully replace outside Resolve" — multicam sync + AI speaker
   detection isn't a quick ffmpeg job — but worth confirming rather than assuming).
-- **Content-aware dynamic power (2026-09-07 idea, not built)**: extend
-  `pipelines/resolve-power/resolve_power.py --watch` from its current binary logic
-  (Resolve running at all -> full power, nothing running -> leave the VR watchdog alone)
-  to a three-tier one, decided by what's actually *on the current timeline*, not just
-  whether Resolve is open:
-  - **Heavy effect detected anywhere on the timeline -> full power**, automatically, no
-    manual `--apply` needed.
-  - **No heavy effect, but a real export/edit is happening -> today's existing capped
-    default is fine (the "0% export-speed difference for a light cut" finding above still
-    holds for this case).**
-  - **Genuinely trivial/short timeline -> could go *lower* than the current 100W floor**,
-    if there's headroom below it worth trading for less heat/noise on a box that's also
-    used for other things (reverb-g2, potential rental) — not measured yet whether the GPU
-    has a useful floor below what the VR watchdog already sets.
-  - **Detection is the solved part, not a guess**: `TimelineItem.GetNodeGraph().GetToolsInNode(i)`
-    (used live this session to find and disable an `OFX: Relight` node on `11111_a.mkv`
-    inside two minutes) lists every OFX/ResolveFX tool actually attached to every node of
-    every clip on a timeline — loop every video-track item, flag anything in a
-    known-heavy set (`Relight`, `Super Scale`, `Speed Warp`, `Noise Reduction`
-    variants, `Magic Mask` — see "Effect-by-effect API + performance map" for which of
-    these actually cost real GPU time on this rig) and decide the power tier from that,
-    before rendering even starts. **Known gap in this detection method**: it only sees
-    per-clip node-graph tools — it does **not** see a Timeline-level grade (Color page's
-    Clip/Timeline toggle) or a track-level effect, both confirmed to exist and to not show
-    up via `GetToolsInNode` (found live this session: a Timeline-wide Film Grain pass was
-    invisible to this exact check). Any real implementation needs to account for that blind
-    spot, not just trust a clean scan.
+- **Genuinely-trivial-timeline power floor, below what the VR watchdog sets**: not
+  attempted — not measured yet whether this GPU has a useful floor below the ~100W the VR
+  watchdog already parks it at, and `--adaptive` (built 2026-09-07, see "Content-aware
+  dynamic power" below) only ever drops back to that existing floor, never lower.
 
 Split out (2026-08-24) from an unrelated VR headset project (`reverb-g2`) on the same rig,
 where this had been accumulating as a side note.
@@ -1520,6 +1497,40 @@ win on a real mixed-content export**, on top of the light-cut/SmartReframe data 
 already in the "Power" section above — worth defaulting to `--watch` for any real export,
 not just AI-heavy operations. It does **not** fix a resolution/frame-rate mismatch bottleneck
 like the one found here; that needs fixing at the source-media level, independent of power.
+
+## Session update (2026-09-07, later still): content-aware dynamic power, built
+
+User's ask after seeing the pacing numbers above: don't hold full power for a whole
+session just because Resolve is open — go full only when the *current timeline* actually
+has something heavy on it, drop back down the moment it doesn't. Built as
+`pipelines/resolve-power/resolve_power.py --watch --adaptive` (opt-in flag; plain
+`--watch` keeps its original unconditional-full behavior, since that's still the
+documented recommendation for a real editing/grading session).
+
+**How it decides**: `scan_timeline_for_heavy_effects()` runs the actual
+`TimelineItem.GetNodeGraph().GetToolsInNode(i)` scan (the exact call used minutes earlier
+this same session to find and disable the `OFX: Relight` node on `11111_a.mkv`) across
+every clip on every video track, in a **subprocess with a hard timeout** — not inline —
+specifically because `dvr.scriptapp('Resolve')` is documented above to block forever
+while Resolve's GUI is mid-playback; that must never be allowed to hang the watch loop.
+An inconclusive scan (timeout, no project/timeline open, Resolve unreachable) leaves the
+current power tier alone rather than guessing.
+
+**Verified live against this exact session**: called `scan_timeline_for_heavy_effects()`
+directly against `Timeline 1` right after disabling Relight's node — it returned `True`,
+which surfaced a real, previously-unknown limitation rather than a bug: **`GetToolsInNode()`
+still reports a tool sitting on a node that's been bypassed via `SetNodeEnabled(i, False)`,
+and there is no `GetNodeEnabled()` to check the reverse.** This function cannot currently
+tell "heavy tool present but bypassed" from "heavy tool present and running" — it treats
+both as heavy, which is the conservative direction (wasted watts vs. a mid-scrub stutter)
+but means bypassing a heavy node without removing it won't bring `--adaptive` back down to
+the capped tier. Combined with the already-known blind spot (a Timeline-level grade or a
+track-level effect — like the Film Grain the user applied at the Timeline level right
+before this — isn't visible to `GetToolsInNode` at all), **`--adaptive` should be read as
+"probably won't under-power a genuinely heavy timeline" rather than "always picks the
+minimally-sufficient tier"** — false-heavy is possible and expected, false-light (missing
+real heavy work) is the failure mode that would actually matter and hasn't been observed
+yet but also hasn't been exhaustively tested against a Timeline-grade-only heavy case.
 
 ## Why this matters (context, not a how-to)
 
