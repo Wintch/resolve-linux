@@ -1265,6 +1265,204 @@ way it had to be done here. Check `docs/reference/api-limitations.md` in the che
 first — this may already be a known, curated gap worth reporting upstream rather than
 patching locally.
 
+### Native MCP server arrives in Resolve 21.1 — benchmarked head-to-head against the community server
+
+**Blackmagic shipped its own MCP server in Resolve Studio 21.1** (released 2026-09-08).
+Found live on this rig, not from release notes: the install here had already been silently
+upgraded to `21.1-mrd1.10.1` (this doc still said 21.0.4.5 above) and
+`/opt/resolve/bin/ResolveMCP` was sitting right there, bundled with the app itself — no
+separate install, no client wiring beyond what the community MCP already needed (External
+scripting = Local).
+
+**Public coverage of this release is wrong about what it actually ships.** CineD,
+digitalproduction.com, explainx.ai and others all report "~88 tools" covering editorial
+operations, Fairlight mixing, multicam switching, etc. Running `ResolveMCP --dump-tools`
+against the real installed binary returns **14 tools**, and the design is nothing like what
+those articles describe — not a bigger or smaller version of the community server's
+one-tool-per-action model, a different model entirely:
+
+| Tool | What it does |
+|---|---|
+| `launch_resolve`, `get_resolve_status`, `get_whats_new` | Lifecycle + a changelog tool explicitly meant to tell the calling agent about features newer than its training data |
+| `get_scripting_api`, `search_scripting_api`, `get_scripting_docs` | Fetch the live `.pyi` stubs (main scripting API, Fusion API, **and the Fusion UI Manager API** — nothing in the community server touches UI Manager) and dev docs straight from the installed build, always version-matched |
+| `run_script` | Sandboxed Python 3.14 against the live `resolve`/`project` objects — no filesystem/network/process access |
+| `run_script_unsafe` | Same, plus full OS access, for tasks like shelling out to `ffmpeg` |
+| `list_luts`, `list_dctls`, `update_dctl`, `delete_dctl`, `delete_lut` | File management for `~/.local/share/DaVinciResolve/LUT/MCP` |
+| `generate_lut` | Builds a `.cube` 3D LUT by evaluating an arbitrary Python transform function per lattice point — no community-server equivalent (theirs only imports/exports/validates *existing* LUT/DCTL files) |
+
+In short: instead of a fixed catalog of pre-built actions, native hands the agent the whole
+scripting surface and a code-execution sandbox to drive it with — the opposite trade-off
+from the community server's 36 (compound) / 353 (granular) purpose-built, safety-wrapped
+tools. Native has zero `safe_*`/dry-run/risk-rating layer (`run_script*` is just flagged
+`destructiveHint: true`), zero built-in ML (no transcription, no visual similarity, no beat
+detection — you'd have to call out to those yourself via `run_script_unsafe`), and only
+works with Resolve already running. Community's Advanced (Node) server is the only one of
+the three that works fully offline against `.drp`/`.drt`/`.drx` files.
+
+**Two real bugs found and fixed while building the benchmark harness below, before any
+number could be trusted:**
+
+1. **`launch_resolve` crashed Resolve outright** the first time — Qt aborted with
+   `Authorization required, but no authorization protocol specified`. This rig's graphical
+   session is Wayland (`mutter`) with a rootless Xwayland, so `DISPLAY=:0` alone isn't
+   enough — the process also needs `XAUTHORITY` pointed at the live
+   `/run/user/1000/.mutter-Xwaylandauth.*` cookie, which isn't exported anywhere by
+   default for a non-interactive shell. Fixed in `bench_lib.resolve_env()`.
+2. **Right after `launch_resolve`, Resolve is sitting on the Project Manager screen, not
+   inside a loaded project** — `GetCurrentProject()` still returns a usable "Untitled
+   Project" object (its name reads fine), but `GetCurrentPage()` returns `None` and any
+   Media Pool write (`CreateEmptyTimeline`, etc.) **silently returns `None` and does
+   nothing — no exception, no error field, nothing.** The fix is to explicitly
+   `CreateProject`/`LoadProject` a *named* project first; that's what actually dismisses
+   the Project Manager and drops the session into the Cut page. Cost real time to catch
+   because the failure mode looks identical to "nothing happened yet."
+
+**Benchmark harness**: [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/) — `bench_lib.py`
+(shared stdio-client helpers for both servers, using the official `mcp` Python SDK already
+vendored in the community server's venv), `setup_bench_project.py` (idempotent fixture: a
+project + `bench_tl` timeline with 8 "Solid Color" generator clips — generators on purpose,
+so the benchmark needs no source footage), and two benchmarks kept as runnable examples:
+
+- **`bench_01_simple.py`** — 4 trivial read-only asks (Resolve version, project name,
+  timeline count, current timeline name), 10 reps each, both servers. Native has no
+  dedicated tool for any of these, so every ask goes through one `run_script` call; community
+  answers each with one purpose-built compound-tool call.
+
+  | backend | median per call |
+  |---|---|
+  | community (compound) | **~5.5 ms** |
+  | native (`run_script`) | **~66 ms** |
+
+  Native pays a flat ~12x tax per call here — consistent with spinning up a fresh sandboxed
+  interpreter context per `run_script` invocation rather than reusing a persistent one, not
+  with any network/protocol overhead (both talk stdio JSON-RPC the same way).
+
+- **`bench_02_batch_rename.py`** — a real compound task: rename all 8 clips on `bench_tl` to
+  `Clip 01`..`Clip 08`. `timeline.get_items` on the community server already batches
+  name/start/end/duration into one call (good design on their part), but there's no batch
+  *write* action — renaming still costs 1 (list) + 8 (one `timeline_item.set_name` each) = 9
+  round trips. Native does the whole loop inside one `run_script` call.
+
+  | backend | median wall time | round trips |
+  |---|---|---|
+  | community (compound) | ~101 ms | 9 |
+  | native (`run_script`) | ~76 ms | 1 |
+
+  This is the crossover point bench_01 doesn't show: native's ~12x-higher fixed cost per
+  call stops mattering once a task needs enough per-item round trips — at 9 calls, native
+  already wins on wall-clock. Both scripts reset the fixture's clip names back to
+  `"Solid Color"` when done, so they're safe to re-run as-is or use as templates for new
+  comparisons.
+
+**Practical takeaway**: pick native for scripted/compound edits (especially anything
+touching Fusion, DCTLs, or generated LUTs) and for driving whatever Resolve feature shipped
+too recently for the community server to have caught up to yet; pick community for single
+quick lookups, anything needing the safety rails (dry-run, risk rating, typed errors), the
+ML extras, or offline `.drp`/`.drt` work with Resolve not even running. Realistically, both
+stay installed and get used for what they're each actually good at.
+
+**Real limitation found while validating `generate_lut` end-to-end**: generated a LUT with
+native (`generate_lut` -> `list_luts` confirmed the file), then tried to apply it to a
+`bench_tl` clip to prove a full native-generates/community-applies round trip. Both sides
+failed identically -- community's `graph.set_lut`/`timeline_item_color.set_cdl` and native's
+own raw `TimelineItem.GetNodeGraph()` all agree: **a "Solid Color" generator clip inserted
+via `InsertGeneratorIntoTimeline` has no node graph at all** (`GetNodeGraph()` returns `None`
+outright) -- not an MCP-layer bug on either side, a real gap in what the scripting API
+exposes for generator clips specifically. `SetLUT`/`SetCDL` both live on the `Graph`/node
+object, so neither backend has any path around it without a node graph to begin with. This
+is exactly why the fixture uses generators (no source-media dependency) but it means
+color/LUT operations need a **real imported clip** to test properly -- noted here rather
+than silently declared "working" on the strength of the generate+list half alone.
+
+### Unified client: one interface, backend picked automatically
+
+[pipelines/mcp-benchmark/resolve_client.py](pipelines/mcp-benchmark/resolve_client.py) wraps
+both servers behind a single `ResolveClient` — callers call `get_version()`,
+`rename_clips()`, `generate_lut()`, etc. without ever choosing native or community; the
+client routes each call using exactly what the two benchmarks above measured (lookups ->
+community, compound/batch/native-only -> native), and keeps both server sessions open for
+its whole lifetime instead of paying a fresh subprocess-spinup cost per call. It also bakes
+in both startup fixes as `ensure_running()`: launches Resolve with the correct `XAUTHORITY`,
+then explicitly creates/loads a named project to escape the Project Manager screen before
+returning control.
+
+[validate_client.py](pipelines/mcp-benchmark/validate_client.py) is the smoke test: launch
+check, three community-backed lookups, a native batch rename (and revert), a native
+`generate_lut`, and a `list_luts` confirmation — 8 checks, all passing live against this rig.
+Kept as the reference example for anything new built on top of `ResolveClient`.
+
+### Three more real features validated: timeline-level grain, auto-subtitles, audio-export gate
+
+Per the standing instruction for this project — **always reach for Resolve's own tooling
+first** before either MCP wrapper — all three of these go through native `run_script`
+calling the raw scripting API directly wherever that API has the feature at all; community
+is used only for the one piece native has no tool for (Gallery stills).
+
+**[grain_timeline_toggle.py](pipelines/mcp-benchmark/grain_timeline_toggle.py) — grade
+applied to the whole timeline, not per clip.** `Timeline.GetNodeGraph()` is a real, distinct
+node graph from any clip's own (`TimelineItem.GetNodeGraph()`) — confirmed by finding a
+real, already-existing case: `test1` / "Timeline 1" (the same 16172-frame timeline this
+repo's render-pacing benchmarks used) already carries `"OFX: Film Grain"` on node 1 of its
+*timeline*-level graph. Toggled it off and back on via `Graph.SetNodeEnabled` to validate
+control over it, with the user's explicit go-ahead to touch this real project (not the
+disposable `bench_tl` fixture) given two real constraints:
+
+- **Neither backend can add a *new* OFX effect to a graph.** Searched the full scripting API
+  surface: `Graph` only has `GetNumNodes`, `SetLUT`/`GetLUT`, node cache/label/enable
+  getters+setters, `GetToolsInNode`, `ApplyArriCdlLut`, `ApplyGradeFromDRX`, and
+  `ResetAllGrades` — no `AddTool`/`AddNode` at all. The only way to introduce a *new* node
+  onto a graph from scripting is `ApplyGradeFromDRX`, which needs a pre-authored `.drx`
+  (built once via the GUI or the Gallery). This is a shared Resolve API limitation, not an
+  MCP-layer gap on either side.
+- **Verifying the toggle actually changed the render needed real pixel diffing, not a
+  returned bool.** `GetToolsInNode()` keeps listing a tool even when its node is disabled
+  (already known from this repo's earlier `--adaptive` work), and there's no
+  `GetNodeEnabled()` getter either — so a still grab (community's `gallery_stills`, the only
+  Gallery tool either server exposes; its own docstring calls this the "WYSIWYG PROOF RULE")
+  is the only trustworthy evidence. **First metric tried, whole-frame luma stddev, was a
+  dead end** — on (8.120) vs off (8.128) looked like noise, indistinguishable from "no
+  effect." An exact per-pixel diff told the real story: this node's grain amount is genuinely
+  low — ~3,200 of 2,073,600 pixels (0.16%) shift, by exactly 1 luma level, every time,
+  reproducibly. Real, just too subtle for a single global average to surface. Switched to
+  "any nonzero, reproducible pixel delta counts" instead of a magnitude threshold. Restore
+  was confirmed the same way: 0 pixels differ between the original grab and the post-restore
+  one. `test1` was left exactly as found (verified live after the fact: node 1 still reports
+  `["OFX: Film Grain"]`, current project back on `MCP-Benchmark`).
+
+**[bench_03_subtitles.py](pipelines/mcp-benchmark/bench_03_subtitles.py) — auto-captions via
+`Timeline.CreateSubtitlesFromAudio()`.** First call, against `bench_tl`'s 8 silent generator
+clips, correctly returned `False` and created nothing — the right answer, not a silent
+no-op; the feature genuinely needs audio. Fixed by synthesizing real speech with `espeak-ng`
+(already on this system) into a *separate* `bench_tl_subs` timeline, so `bench_01`/`bench_02`
+keep their assumption of 8 clips on `bench_tl` intact. **Two more real import gotchas found
+en route**: `MediaPool.ImportMedia()` silently returns an empty list for a plain valid WAV
+outside a registered Media Storage volume (`/tmp` isn't one — `/home/iam/Videos` and
+`/mnt/videos` are, per `MediaStorage.GetMountedVolumeList()`) — a source-import version of
+this repo's already-known render-output-path constraint. And *even inside* a registered
+volume, `ImportMedia` still silently failed on the exact file that
+`MediaStorage.AddItemListToMediaPool()` (the Media Storage browser's own import call)
+imported correctly on the first try — worked around by using that instead. Then a *third*
+gotcha: re-running against the same synthesized filename made `AddItemListToMediaPool` fail
+too — it dedups by path against what's already in the project's Media Pool and returns
+nothing (not the existing item, not an error) for a path it already imported, even if the
+file on disk changed since. Fixed with a uuid-suffixed filename per run. End state, once all
+three were fixed: real, correct transcription — 3 subtitle segments matching the spoken
+sentence, in ~12.5s.
+
+**[audio_loudness_check.py](pipelines/mcp-benchmark/audio_loudness_check.py) — an
+export-time gate against YouTube's commonly-cited loudness guidance** (~-14 LUFS integrated,
+true peak at or below -1 dBTP, a sane loudness range so the mix isn't over-compressed).
+Checked Resolve's own tooling first, per the same instruction: the scripting API can *set* a
+normalization target (`Timeline.NormalizeAudioLevel` + `NormalizeAudioOptions.targetLoudness`,
+which takes LKFS) but has no method anywhere to *read back* measured loudness or true peak —
+confirmed by searching the whole API surface, not just assuming. So this genuinely has no
+Resolve-native path and goes through ffmpeg's `loudnorm` filter (already on this rig as one
+of the AI-extras dependencies) analyzing the actual exported file — arguably the more correct
+place for an export gate anyway, since it validates the real deliverable rather than
+Resolve's internal state. Self-tested with two synthetic tones (no Resolve, no real project
+needed): one normalized to -14 LUFS passes, one pushed +12dB and hard-limited fails on the
+loudness check — `--selftest` flag reproduces this on demand.
+
 ## Bundled plugins, and what third-party plugins are actually worth trying on Linux
 
 **Blackmagic's own "AI Extras" pack (downloaded separately, paused mid-download)**: on

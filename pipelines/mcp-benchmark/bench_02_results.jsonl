@@ -1,0 +1,10 @@
+{"label": "batch_rename", "seconds": 0.0752727820004111, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.07608673899994756, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.07574557899988577, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.07599279300029593, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.0748795549998249, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.43373223800017513, "round_trips": 9, "is_error": false}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.09546825300003547, "round_trips": 9, "is_error": false}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.10135842199997569, "round_trips": 9, "is_error": false}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.10289478400000007, "round_trips": 9, "is_error": false}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.09695239700022285, "round_trips": 9, "is_error": false}
