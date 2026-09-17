@@ -37,23 +37,14 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.append("/opt/resolve/Developer/Scripting/Modules/")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from effect_benchmark import GpuPoller  # noqa: E402
+from effect_benchmark import GpuPoller, connect  # noqa: E402
 
 DEFAULT_OUT = Path(__file__).resolve().parent / "render_benchmark_results.jsonl"
 DEFAULT_OUTDIR = Path("/home/iam/Videos/render_benchmark_tmp")
 
 TERMINAL_STATUSES = {"Complete", "Cancelled", "Failed"}
-
-
-def connect():
-    import DaVinciResolveScript as dvr
-    resolve = dvr.scriptapp("Resolve")
-    if resolve is None:
-        raise RuntimeError("scripting API connect failed -- is Resolve running and not mid-playback?")
-    return resolve
 
 
 def probe_output(path: Path) -> dict:
@@ -69,11 +60,14 @@ def probe_output(path: Path) -> dict:
         return {"ffprobe_error": out.stderr.strip()}
 
 
-def bench_one_preset(proj, preset: str, outdir: Path, poll_s: float) -> dict:
+def bench_one_preset(proj, preset: str, outdir: Path, poll_s: float, max_render_s: float) -> tuple:
+    """Returns (record, output files). Every exit path returns that same pair:
+    the early error returns used to hand back a bare dict, which main()'s
+    two-value unpack turned into a ValueError instead of a recorded error row."""
     record = {"preset": preset}
     if not proj.LoadRenderPreset(preset):
         record["error"] = "LoadRenderPreset failed"
-        return record
+        return record, []
 
     outdir.mkdir(parents=True, exist_ok=True)
     stamp = f"benchmark_{preset.replace(' ', '_').replace('/', '-')}"
@@ -87,7 +81,7 @@ def bench_one_preset(proj, preset: str, outdir: Path, poll_s: float) -> dict:
     job_id = proj.AddRenderJob()
     if not job_id:
         record["error"] = "AddRenderJob returned no job_id"
-        return record
+        return record, []
     record["job_id"] = job_id
 
     t0 = time.monotonic()
@@ -97,6 +91,12 @@ def bench_one_preset(proj, preset: str, outdir: Path, poll_s: float) -> dict:
         while True:
             status = proj.GetRenderJobStatus(job_id)
             if status.get("JobStatus") in TERMINAL_STATUSES:
+                break
+            if time.monotonic() - t0 > max_render_s:
+                # the render livelock documented in the README never reaches a
+                # terminal status on its own -- don't poll it forever
+                proj.StopRendering()
+                record["error"] = f"no terminal status after {max_render_s:.0f}s, StopRendering called"
                 break
             time.sleep(poll_s)
     wall_s = time.monotonic() - t0
@@ -132,6 +132,8 @@ def main():
     ap.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--poll-s", type=float, default=1.0)
+    ap.add_argument("--max-render-s", type=float, default=3600.0,
+                     help="give up on a job that hasn't reached a terminal status by then (default: 3600)")
     ap.add_argument("--keep", action="store_true", help="don't delete render output after ffprobe verification")
     args = ap.parse_args()
 
@@ -151,7 +153,7 @@ def main():
             # clear any stale queued jobs so StartRendering only runs this one
             for jid in [j["JobId"] for j in proj.GetRenderJobList()]:
                 proj.DeleteRenderJob(jid)
-            record, out_files = bench_one_preset(proj, preset, args.outdir, args.poll_s)
+            record, out_files = bench_one_preset(proj, preset, args.outdir, args.poll_s, args.max_render_s)
             record["ts"] = time.time()
             record["timeline"] = tl.GetName()
             print(json.dumps(record))

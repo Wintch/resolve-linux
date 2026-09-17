@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "resolve-native": {
+      "command": "pipelines/mcp-benchmark/resolve_mcp_wrapper.sh",
+      "args": ["native"]
+    },
+    "resolve-community": {
+      "command": "pipelines/mcp-benchmark/resolve_mcp_wrapper.sh",
+      "args": ["community"]
+    }
+  }
+}

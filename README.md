@@ -61,12 +61,27 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   `render_benchmark.py` (per-delivery-profile render timing/GPU load) — built to answer
   "what does this cost on this GPU" for real, one JSON-lines record per run, not a
   one-off measurement. See "Effect-by-effect benchmark harness" and "Render-profile
-  benchmark" below.
+  benchmark" below. (2026-09-17: both now share one `connect()` that probes the scripting
+  connection in a throwaway subprocess first, so the mid-playback hang is a clear error
+  instead of a frozen script; `render_benchmark.py` records a failed preset as an error row
+  — it used to crash on the unpack — and gives up on a job after `--max-render-s`.)
 - **[pipelines/resolve-backup/](pipelines/resolve-backup/)**: a self-contained Python tool
   that snapshots Resolve's own project files (Disk Database) and user config/Fusion/
   Fairlight state — ported from the same idea as `reverb-g2`'s `backup-steam-config.sh`
   (timestamped `cp -a`, kept outside git, warns if the live app is running). On-demand,
   not wired into cron/systemd yet.
+- **[pipelines/mcp-benchmark/](pipelines/mcp-benchmark/)**: the Resolve automation layer —
+  `resolve_client.py` (`ResolveClient`: native-first, raising, timeout-guarded client over
+  both MCP servers, including import, stills and a render-with-loudness-gate wrapper),
+  `validate_client.py` (its live end-to-end test), the native-vs-community benchmarks, and
+  `resolve_mcp_wrapper.sh` (what the repo-root `.mcp.json` points MCP clients at). See
+  "AI-driven control via MCP" below.
+- **[pipelines/resolve-update/](pipelines/resolve-update/)**: procedure + scripts for
+  updating the OS and Resolve itself (21.0.4 → 21.1) with a rollback path at every stage —
+  repacked `.deb`s of the validated build, a project/config snapshot via `resolve-backup`,
+  and a post-update NVIDIA/DKMS check that defers to `reverb-g2`'s own
+  `pre-update-check.sh`, since the patched 595 driver is shared state with that project.
+  Its README is upfront about the limit: no whole-disk snapshot is possible on this rig.
 
 ### Guide backlog — not built yet, tracked so it isn't lost
 
@@ -1094,7 +1109,7 @@ Net: nothing across 21.0.2 → 21.0.4 changes the AAC-unsupported or
 H.264/HEVC-Studio-plus-NVIDIA-only findings. Re-check this section on the next point
 release rather than assuming it's stable indefinitely.
 
-## AI-driven control via MCP — installed, connection pending
+## AI-driven control via MCP — two servers installed, connected, wired into Claude Code
 
 [samuelgursky/davinci-resolve-mcp](https://github.com/samuelgursky/davinci-resolve-mcp)
 (v2.103.1) exposes Resolve's official scripting API to any MCP client, plus an optional
@@ -1155,8 +1170,14 @@ yet something to install and test here.
   export RESOLVE_SCRIPT_LIB="/opt/resolve/libs/Fusion/fusionscript.so"
   export PYTHONPATH="$PYTHONPATH:$RESOLVE_SCRIPT_API/Modules/"
   ```
-- **No MCP client configured yet** (Claude Code / Claude Desktop / etc.) — deliberately
-  skipped for now, decide later how/where to wire it in.
+- **MCP client wiring (2026-09-17)**: the repo-root [`.mcp.json`](.mcp.json) registers both
+  servers with Claude Code as `resolve-native` and `resolve-community`, each launched through
+  [`resolve_mcp_wrapper.sh`](pipelines/mcp-benchmark/resolve_mcp_wrapper.sh). The wrapper
+  exists because a static `env` block can't express this rig's X11 cookie (a new
+  `.mutter-Xwaylandauth.<random>` name every login — see the `launch_resolve` crash below).
+  Project-scoped servers need a one-time approval the first time `claude` is opened in this
+  directory. (Until this date no client was configured at all — everything went through the
+  Python harness.)
 
 ### Server modes (two independent servers, can run together)
 
@@ -1361,6 +1382,14 @@ quick lookups, anything needing the safety rails (dry-run, risk rating, typed er
 ML extras, or offline `.drp`/`.drt` work with Resolve not even running. Realistically, both
 stay installed and get used for what they're each actually good at.
 
+**Superseded for routing purposes (2026-09-17)**: the numbers above stand, but "pick
+community for single quick lookups" is no longer how `ResolveClient` routes — the standing
+rule for this project is Resolve's own tooling first, and ~60 ms on a lookup doesn't justify
+a second server in the path. See the unified-client section below. Also worth knowing when
+reading bench_02's community numbers: that server's safety layer archives the timeline the
+first time a session mutates it (`bench_tl_archived_v0N` copies pile up in the fixture
+project, one per run), which is what separates its mean (~160 ms) from its median (~90 ms).
+
 **Real limitation found while validating `generate_lut` end-to-end**: generated a LUT with
 native (`generate_lut` -> `list_luts` confirmed the file), then tried to apply it to a
 `bench_tl` clip to prove a full native-generates/community-applies round trip. Both sides
@@ -1374,29 +1403,78 @@ is exactly why the fixture uses generators (no source-media dependency) but it m
 color/LUT operations need a **real imported clip** to test properly -- noted here rather
 than silently declared "working" on the strength of the generate+list half alone.
 
-### Unified client: one interface, backend picked automatically
+### Unified client: native first, errors that raise, a timeout on everything
 
-[pipelines/mcp-benchmark/resolve_client.py](pipelines/mcp-benchmark/resolve_client.py) wraps
-both servers behind a single `ResolveClient` — callers call `get_version()`,
-`rename_clips()`, `generate_lut()`, etc. without ever choosing native or community; the
-client routes each call using exactly what the two benchmarks above measured (lookups ->
-community, compound/batch/native-only -> native), and keeps both server sessions open for
-its whole lifetime instead of paying a fresh subprocess-spinup cost per call. It also bakes
-in both startup fixes as `ensure_running()`: launches Resolve with the correct `XAUTHORITY`,
-then explicitly creates/loads a named project to escape the Project Manager screen before
-returning control.
+[pipelines/mcp-benchmark/resolve_client.py](pipelines/mcp-benchmark/resolve_client.py)
+(`ResolveClient`) is the one entry point for scripted Resolve work in this repo. Reworked
+2026-09-17 after a review of the first cut found it could report success on failure:
 
-[validate_client.py](pipelines/mcp-benchmark/validate_client.py) is the smoke test: launch
-check, three community-backed lookups, a native batch rename (and revert), a native
-`generate_lut`, and a `list_luts` confirmation — 8 checks, all passing live against this rig.
-Kept as the reference example for anything new built on top of `ResolveClient`.
+- **Routing: native always, community only as a lazy fallback.** The first cut sent lookups
+  to community on the strength of bench_01's latency gap; that contradicted this project's
+  own native-first rule. Lookups now come from one native round trip (`get_context()`), and
+  the community server isn't even started unless a fallback is needed — the client works
+  with it absent.
+- **Every method raises `ResolveError` and returns parsed data**, never a timing dict to be
+  substring-matched. This surfaced the most important finding of the review: **native's
+  `run_script` reports a script exception as a *successful* MCP result** — `isError` stays
+  false and the traceback arrives as `{"error": "Traceback…"}` (a normal run is
+  `{"output": …, "result": …}`). Every `is_error` check in this directory had therefore been
+  blind to script failures; `bench_lib.timed_call` now treats that envelope as the error it is.
+- **Every call carries a timeout** (native's own server-side one, max 60 s, plus a
+  client-side read timeout above it), so the documented "scripting call never returns while
+  the GUI is mid-playback" hang surfaces as an error. Verified both ways: a `while True`
+  script comes back as `ResolveError` in 3 s, a client-side timeout in 1 s, and the session
+  stays usable afterwards.
+- **Values are interpolated with `repr()`**, not pasted between quotes. (Probed live while
+  testing this: Resolve itself refuses a `"` in a project name — `CreateProject` returns
+  `None` — but accepts an apostrophe.)
+- **`import_media()`** encodes the three import gotchas below as code — registered-volume
+  check, `AddItemListToMediaPool` rather than `ImportMedia`, and a path lookup instead of
+  the silent empty list a re-import returns. One more found here: imports land in whichever
+  Media Pool folder is *current*, not the root.
+- **`grab_still()` runs native-only.** See the correction in the grain section below.
+- **`render()`** is the render-lifecycle wrapper the fork question above concluded was the
+  missing piece: refuses a target outside a Media Storage volume *before* queueing, raises on
+  a silent `AddRenderJob` `None`, polls with a hard deadline (then `StopRendering`), only
+  ever touches its own job, verifies the file with `ffprobe`, and finally runs
+  `audio_loudness_check` on the real deliverable — so the loudness gate is now actually part
+  of an export rather than a standalone script.
+- `bench_lib.resolve_env()` no longer hardcodes uid 1000, respects an existing
+  `DISPLAY`/`XAUTHORITY` (the Xorg/KDE case), picks the newest cookie, and never exports an
+  empty `XAUTHORITY`. Server stderr is dropped unless `RESOLVE_MCP_DEBUG=1`.
+
+[validate_client.py](pipelines/mcp-benchmark/validate_client.py) is the live test, and the
+part of the review that mattered most: **its original 8 green checks proved much less than
+they appeared to** — a check only failed on an exception, and the calls underneath never
+raised. It now asserts on returned values, runs only against the disposable `MCP-Benchmark`
+fixture (plus a synthetic DNxHR/PCM clip generated under `~/Videos/mcp-bench-scratch`, since
+generator clips have no node graph to grab a still from), and ends with negative checks
+proving failures are loud: 17 checks, all passing live on 21.1.0.17, including a real render
+measured at −14.04 LUFS by the gate. The benchmarks also gained a guard after one was caught
+measuring the wrong timeline: they all address "the current timeline", so they now select
+`bench_tl` and verify its 8 clips first, and exit non-zero on any failed call.
+
+Run anything here with the community checkout's interpreter
+(`~/resolve-install/davinci-resolve-mcp/venv/bin/python <script>`), or build a local venv
+from [requirements.txt](pipelines/mcp-benchmark/requirements.txt) — the `venv/bin/python`
+the scripts' docstrings used to name never existed in this directory.
 
 ### Three more real features validated: timeline-level grain, auto-subtitles, audio-export gate
 
 Per the standing instruction for this project — **always reach for Resolve's own tooling
 first** before either MCP wrapper — all three of these go through native `run_script`
 calling the raw scripting API directly wherever that API has the feature at all; community
-is used only for the one piece native has no tool for (Gallery stills).
+was used only for the one piece native has no tool for (Gallery stills).
+
+**Correction (2026-09-17): "native can't do stills" was wrong.** Native ships no stills
+*tool*, but `Timeline.GrabStill()` + `GalleryStillAlbum.ExportStills()` are in the scripting
+API and `run_script_unsafe` can read the exported PNG back (and delete the still again, so
+the Gallery is left as found). Verified live with the community server not even started:
+1920×1080 PNG, pixel-identical across repeated grabs. `grain_timeline_toggle.py` now goes
+through `ResolveClient.grab_still()` and takes `--project/--timeline/--node`, so its code
+path can be exercised against the fixture; the pixel-diff numbers below are from the
+original community-stills run against `test1` and have **not** been re-measured since the
+port — that needs a fresh go-ahead to touch the real project.
 
 **[grain_timeline_toggle.py](pipelines/mcp-benchmark/grain_timeline_toggle.py) — grade
 applied to the whole timeline, not per clip.** `Timeline.GetNodeGraph()` is a real, distinct

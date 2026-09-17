@@ -14,16 +14,15 @@ action per ask. This benchmark measures the per-call round-trip cost of
 each approach for the simplest possible asks, where the community model's
 one-call-per-answer design should be at its best relative to native.
 
-Run: venv/bin/python bench_01_simple.py
+Run: ~/resolve-install/davinci-resolve-mcp/venv/bin/python bench_01_simple.py
 Requires: setup_bench_project.py already run once, Resolve already running
 (this repo's own resolve_power.py / launch_resolve can start it).
 """
 import asyncio
-import json
 import statistics
 from pathlib import Path
 
-from bench_lib import community_session, native_session, timed_call
+from bench_lib import community_session, native_session, select_fixture_timeline, timed_call, write_results
 
 REPS = 10
 RESULTS_FILE = Path(__file__).parent / "bench_01_results.jsonl"
@@ -49,6 +48,7 @@ COMMUNITY_OPS = {
 async def bench_native():
     results = []
     async with native_session() as session:
+        await select_fixture_timeline(session)
         for op_name, script in NATIVE_OPS.items():
             for _ in range(REPS):
                 r = await timed_call(session, "run_script", {"script": script}, label=op_name)
@@ -84,14 +84,12 @@ def summarize(results):
         )
 
 
-async def main():
+async def main() -> int:
     all_results = []
     all_results += await bench_native()
     all_results += await bench_community("compound")
 
-    with RESULTS_FILE.open("w") as f:
-        for r in all_results:
-            f.write(json.dumps(r) + "\n")
+    write_results(RESULTS_FILE, all_results)
 
     errors = [r for r in all_results if r["is_error"]]
     if errors:
@@ -101,7 +99,8 @@ async def main():
 
     summarize(all_results)
     print(f"\nRaw results: {RESULTS_FILE}")
+    return 1 if errors else 0  # a timing taken over failed calls isn't a result
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

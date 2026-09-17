@@ -47,7 +47,7 @@ though the file on disk had been deleted and regenerated in between. Fixed
 by giving each run's synthesized WAV a unique filename (uuid4 suffix) so it
 never collides with a prior run's import.
 
-Run: venv/bin/python bench_03_subtitles.py
+Run: ~/resolve-install/davinci-resolve-mcp/venv/bin/python bench_03_subtitles.py
 Requires: setup_bench_project.py already run once, `espeak-ng` on PATH.
 """
 import asyncio
@@ -81,7 +81,7 @@ proj.SetCurrentTimeline(tl)
 ms = resolve.GetMediaStorage()
 items = ms.AddItemListToMediaPool([%(wav_path)r])
 if not items:
-    result = {"error": "AddItemListToMediaPool returned no items"}
+    raise RuntimeError("AddItemListToMediaPool returned no items")
 else:
     appended = mp.AppendToTimeline([{"mediaPoolItem": items[0]}])
     track_before = tl.GetTrackCount("subtitle")
@@ -116,9 +116,13 @@ async def main():
         async with native_session() as session:
             r = await timed_call(session, "run_script", {"script": script, "timeout": 30}, label="create_subtitles")
 
-        print(f"\n{'ok':<5} {r['seconds']*1000:.1f}ms  {r['result_preview']}")
+        print(f"\n{r['seconds']*1000:.1f}ms  {r['result_text']}")
         if r["is_error"]:
             raise SystemExit("run_script errored -- see output above")
+        outcome = (r["result_json"] or {}).get("result") or {}
+        if not (outcome.get("create_subtitles_returned") and outcome.get("subtitle_item_count", 0) > 0):
+            raise SystemExit("FAIL -- CreateSubtitlesFromAudio produced no subtitle items")
+        print(f"PASS -- {outcome['subtitle_item_count']} subtitle item(s): {outcome['subtitle_item_names']}")
     finally:
         wav_path.unlink(missing_ok=True)
 

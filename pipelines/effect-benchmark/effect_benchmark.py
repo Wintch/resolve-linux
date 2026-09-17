@@ -38,8 +38,6 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.append("/opt/resolve/Developer/Scripting/Modules/")
-
 DEFAULT_OUT = Path(__file__).resolve().parent / "effect_benchmark_results.jsonl"
 
 NVIDIA_SMI_QUERY = "utilization.gpu,power.draw,clocks.sm"
@@ -96,12 +94,33 @@ class GpuPoller:
                 pass
 
 
-def connect():
+SCRIPT_MODULES = "/opt/resolve/Developer/Scripting/Modules/"
+sys.path.append(SCRIPT_MODULES)
+
+
+def connect(timeout_s: float = 15):
+    """`scriptapp("Resolve")` never returns while Resolve's GUI is mid-playback
+    (README's known-limitations table), and because the blocking receive in
+    fusionscript.so holds the GIL (see GpuPoller above) no in-process timer or
+    signal handler can interrupt it. So probe the connection in a throwaway
+    subprocess first -- the same trick resolve_power.py uses -- and only
+    connect in-process once that came back."""
+    probe = (
+        f"import sys; sys.path.append({SCRIPT_MODULES!r}); import DaVinciResolveScript as dvr; "
+        "sys.exit(0 if dvr.scriptapp('Resolve') else 1)"
+    )
+    try:
+        reachable = subprocess.run([sys.executable, "-c", probe], capture_output=True, timeout=timeout_s).returncode == 0
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"scripting API connect hung for {timeout_s:.0f}s -- Resolve is almost certainly mid-playback; "
+            "stop playback and retry"
+        ) from None
+    if not reachable:
+        raise RuntimeError("scripting API connect failed -- is Resolve running, with External scripting = Local?")
+
     import DaVinciResolveScript as dvr
-    resolve = dvr.scriptapp("Resolve")
-    if resolve is None:
-        raise RuntimeError("scripting API connect failed -- is Resolve running and not mid-playback?")
-    return resolve
+    return dvr.scriptapp("Resolve")
 
 
 def get_item(resolve, track_type: str, track_index: int, item_index: int):

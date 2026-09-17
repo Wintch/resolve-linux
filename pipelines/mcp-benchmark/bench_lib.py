@@ -15,33 +15,60 @@ Both speak standard MCP over stdio, so both are driven with the same
 mcp.client.stdio machinery -- no protocol-specific code needed per server.
 """
 import glob
+import json
 import os
+import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
+from datetime import timedelta
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-COMMUNITY_REPO = os.path.expanduser("~/resolve-install/davinci-resolve-mcp")
+# Overridable because this rig has no working sudo: anything run from the
+# operator's root shell sees "~" as /root, not the desktop user's home.
+COMMUNITY_REPO = os.environ.get("RESOLVE_MCP_COMMUNITY_REPO") or os.path.expanduser(
+    "~/resolve-install/davinci-resolve-mcp"
+)
 COMMUNITY_PYTHON = os.path.join(COMMUNITY_REPO, "venv", "bin", "python")
-NATIVE_BINARY = "/opt/resolve/bin/ResolveMCP"
+NATIVE_BINARY = os.environ.get("RESOLVE_MCP_NATIVE_BINARY", "/opt/resolve/bin/ResolveMCP")
+
+# Both servers log every JSON-RPC message to stderr at DEBUG level -- useful
+# once, pure noise on every run after that.
+_DEBUG = bool(os.environ.get("RESOLVE_MCP_DEBUG"))
 
 
-def _find_xauthority() -> str:
-    """This rig runs a Wayland session (mutter) with Xwayland rootless.
+def _find_xauthority():
+    """This rig's default session is Wayland (mutter) with Xwayland rootless.
     Resolve's GUI needs a real X11 auth cookie -- DISPLAY alone crashes it
     with SIGABRT ("Authorization required, but no authorization protocol
-    specified"), found live while building this benchmark."""
-    matches = glob.glob("/run/user/1000/.mutter-Xwaylandauth.*")
+    specified"), found live while building this benchmark.
+
+    An XAUTHORITY already exported and pointing at a real file wins (the
+    Xorg/KDE session case, see README's 2026-09-07 update). Otherwise take
+    the newest mutter cookie -- a stale one from a crashed session can linger
+    next to the live one. Returns None rather than "" when nothing is found:
+    an empty XAUTHORITY is worse than an unset one."""
+    current = os.environ.get("XAUTHORITY")
+    if current and os.path.isfile(current):
+        return current
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    matches = glob.glob(os.path.join(runtime_dir, ".mutter-Xwaylandauth.*"))
     if matches:
-        return matches[0]
-    return os.environ.get("XAUTHORITY", "")
+        return max(matches, key=os.path.getmtime)
+    fallback = os.path.expanduser("~/.Xauthority")
+    return fallback if os.path.isfile(fallback) else None
 
 
 def resolve_env() -> dict:
     env = dict(os.environ)
-    env["DISPLAY"] = ":0"
-    env["XAUTHORITY"] = _find_xauthority()
+    if not env.get("DISPLAY"):
+        env["DISPLAY"] = ":0"
+    xauthority = _find_xauthority()
+    if xauthority:
+        env["XAUTHORITY"] = xauthority
+    else:
+        env.pop("XAUTHORITY", None)
     env["RESOLVE_SCRIPT_API"] = "/opt/resolve/Developer/Scripting"
     env["RESOLVE_SCRIPT_LIB"] = "/opt/resolve/libs/Fusion/fusionscript.so"
     modules_path = "/opt/resolve/Developer/Scripting/Modules/"
@@ -50,13 +77,19 @@ def resolve_env() -> dict:
     return env
 
 
+def _errlog():
+    """Server stderr: passed through with RESOLVE_MCP_DEBUG=1, dropped otherwise."""
+    return nullcontext(sys.stderr) if _DEBUG else open(os.devnull, "w")
+
+
 @asynccontextmanager
 async def native_session():
     params = StdioServerParameters(command=NATIVE_BINARY, args=[], env=resolve_env())
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    with _errlog() as errlog:
+        async with stdio_client(params, errlog=errlog) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
 
 @asynccontextmanager
@@ -67,34 +100,105 @@ async def community_session(mode: str = "compound"):
     params = StdioServerParameters(
         command=COMMUNITY_PYTHON, args=args, env=resolve_env(), cwd=COMMUNITY_REPO
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    with _errlog() as errlog:
+        async with stdio_client(params, errlog=errlog) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
 
 def _flatten_text(content) -> str:
     return "".join(getattr(c, "text", "") for c in content)
 
 
-async def timed_call(session: ClientSession, tool: str, arguments: dict, label: str = None) -> dict:
+def parse_result(text: str):
+    """Both servers return structured results as one JSON text block. Parse
+    it rather than substring-matching it: `'"page": null' in preview` style
+    checks break on any whitespace change and on anything past a truncated
+    preview. Returns None when the text isn't JSON (plain error strings)."""
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _is_error_envelope(parsed) -> bool:
+    """native's run_script reports a script exception as a *successful* MCP
+    result -- isError stays false and the traceback arrives as
+    {"error": "Traceback ..."} (a normal run is {"output": ..., "result": ...}).
+    Found live: trusting isError alone meant no script failure was ever
+    detected. community signals its failures with a top-level "error" key too."""
+    return isinstance(parsed, dict) and "error" in parsed and "result" not in parsed
+
+
+async def timed_call(
+    session: ClientSession, tool: str, arguments: dict, label: str = None, timeout: float = None
+) -> dict:
     """Call one MCP tool, return timing + result, never raise on tool-level errors
     (a script error inside run_script is a normal benchmark data point, not a
-    harness failure)."""
+    harness failure). Callers that need a failure to be loud must check
+    `is_error` themselves -- see resolve_client.ResolveClient for the raising
+    wrapper.
+
+    `timeout` (seconds) bounds the whole round trip client-side. It exists
+    because a scripting call made while Resolve's GUI is mid-playback never
+    returns at all (README's known-limitations table)."""
     label = label or tool
+    read_timeout = timedelta(seconds=timeout) if timeout else None
     t0 = time.perf_counter()
     try:
-        result = await session.call_tool(tool, arguments)
+        result = await session.call_tool(tool, arguments, read_timeout_seconds=read_timeout)
+        elapsed = time.perf_counter() - t0
+        text = _flatten_text(result.content)
+        parsed = parse_result(text)
+        return {
+            "label": label,
+            "seconds": elapsed,
+            "is_error": bool(getattr(result, "isError", False)) or _is_error_envelope(parsed),
+            "result_preview": text[:300],
+            "result_text": text,
+            "result_json": parsed,
+        }
+    except Exception as exc:
         elapsed = time.perf_counter() - t0
         return {
             "label": label,
             "seconds": elapsed,
-            "is_error": bool(getattr(result, "isError", False)),
-            "result_preview": _flatten_text(result.content)[:300],
+            "is_error": True,
+            "result_preview": repr(exc)[:300],
+            "result_text": repr(exc),
+            "result_json": None,
         }
-    except Exception as exc:
-        elapsed = time.perf_counter() - t0
-        return {"label": label, "seconds": elapsed, "is_error": True, "result_preview": repr(exc)[:300]}
+
+
+async def select_fixture_timeline(session: ClientSession, name: str = "bench_tl", clip_count: int = 8) -> None:
+    """Make `name` the current timeline and check it still holds the fixture.
+    Every benchmark script addresses "the current timeline", so without this
+    they silently measure (and rename clips on) whatever was left selected --
+    caught live when bench_02 reported 2 round trips instead of 9 because a
+    1-clip timeline happened to be current."""
+    script = f"""
+proj = resolve.GetProjectManager().GetCurrentProject()
+tl = next((proj.GetTimelineByIndex(i) for i in range(1, proj.GetTimelineCount() + 1)
+           if proj.GetTimelineByIndex(i).GetName() == {name!r}), None)
+if tl is None or not proj.SetCurrentTimeline(tl):
+    raise RuntimeError("fixture timeline " + {name!r} + " not found in " + proj.GetName() + " -- run setup_bench_project.py")
+clips = len(tl.GetItemListInTrack("video", 1) or [])
+if clips != {int(clip_count)}:
+    raise RuntimeError(f"{{clips}} clips on " + {name!r} + ", fixture wants {int(clip_count)}")
+result = clips
+"""
+    r = await timed_call(session, "run_script", {"script": script}, label="select_fixture_timeline", timeout=20)
+    if r["is_error"]:
+        raise SystemExit(f"fixture check failed: {r['result_text']}")
+
+
+def write_results(path, rows) -> None:
+    """One JSON object per line, without the full result payloads -- the
+    committed .jsonl files are timing records, `result_preview` is enough."""
+    with open(path, "w") as f:
+        for row in rows:
+            f.write(json.dumps({k: v for k, v in row.items() if k not in ("result_text", "result_json")}) + "\n")
 
 
 async def run_native_script(session: ClientSession, script: str, label: str = "run_script") -> dict:

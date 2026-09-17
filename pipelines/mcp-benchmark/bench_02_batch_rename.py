@@ -26,7 +26,7 @@ higher fixed cost per call.
 Resets clip names back to "Solid Color" at the end so re-running this (or
 bench_01/setup_bench_project.py) starts from a known state.
 
-Run: venv/bin/python bench_02_batch_rename.py
+Run: ~/resolve-install/davinci-resolve-mcp/venv/bin/python bench_02_batch_rename.py
 Requires: setup_bench_project.py already run once.
 """
 import asyncio
@@ -35,7 +35,7 @@ import statistics
 import time
 from pathlib import Path
 
-from bench_lib import community_session, native_session, timed_call
+from bench_lib import community_session, native_session, select_fixture_timeline, timed_call, write_results
 
 REPS = 5
 RESULTS_FILE = Path(__file__).parent / "bench_02_results.jsonl"
@@ -74,6 +74,7 @@ async def rename_pass_community(session):
     t0 = time.perf_counter()
     round_trips = 0
     is_error = False
+    error_detail = None
     try:
         res = await session.call_tool(
             "timeline", {"action": "get_items", "params": {"track_type": "video", "index": 1}}
@@ -88,8 +89,10 @@ async def rename_pass_community(session):
             round_trips += 1
             if getattr(r, "isError", False):
                 is_error = True
-    except Exception:
+                error_detail = _flatten(r.content)[:300]
+    except Exception as exc:
         is_error = True
+        error_detail = repr(exc)[:300]
     elapsed = time.perf_counter() - t0
     return {
         "label": "batch_rename",
@@ -97,31 +100,29 @@ async def rename_pass_community(session):
         "seconds": elapsed,
         "round_trips": round_trips,
         "is_error": is_error,
+        "result_preview": error_detail,
     }
 
 
-async def main():
+async def main() -> int:
     results = []
 
     async with native_session() as session:
+        await select_fixture_timeline(session)
         for _ in range(REPS):
             results.append(await rename_pass_native(session))
 
     async with community_session("compound") as session:
         for _ in range(REPS):
             results.append(await rename_pass_community(session))
-        # leave the fixture in a known state for the next run
-        await session.call_tool(
-            "timeline", {"action": "get_items", "params": {"track_type": "video", "index": 1}}
-        )
 
     # reset via native (one call, cheap) regardless of which backend ran last
     async with native_session() as session:
-        await session.call_tool("run_script", {"script": RESET_SCRIPT})
+        reset = await timed_call(session, "run_script", {"script": RESET_SCRIPT}, label="reset")
+    if reset["is_error"]:
+        print(f"\nfixture reset FAILED, clip names left as-is: {reset['result_preview']}")
 
-    with RESULTS_FILE.open("w") as f:
-        for r in results:
-            f.write(json.dumps(r) + "\n")
+    write_results(RESULTS_FILE, results)
 
     by_backend = {}
     for r in results:
@@ -138,9 +139,12 @@ async def main():
     errors = [r for r in results if r["is_error"]]
     if errors:
         print(f"\n{len(errors)} error(s) -- see {RESULTS_FILE}")
+        for e in errors[:5]:
+            print(" ", e["backend"], e.get("result_preview"))
 
     print(f"\nRaw results: {RESULTS_FILE}")
+    return 1 if errors or reset["is_error"] else 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))
