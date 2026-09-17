@@ -63,6 +63,12 @@ SCRIPT_TIMEOUT_MAX_S = 60
 # Resolve (mid-playback hang) trips this one
 CLIENT_TIMEOUT_MARGIN_S = 10
 LAUNCH_TIMEOUT_S = 90  # launch_resolve itself waits up to 60s
+# GrabStill hands back a GalleryStill before its image has been written:
+# ExportStills called straight after exports stale content instead -- a
+# different frame, or the right frame minus the change just made -- with no
+# error and perfectly repeatably. community's grab_and_export sleeps 0.5s at
+# the same spot, which is the only reason it never showed this.
+STILL_SETTLE_S = 0.5
 RENDER_TERMINAL_STATUSES = {"Complete", "Cancelled", "Failed"}
 
 
@@ -370,7 +376,7 @@ result = {{"job_id": job_id, "timeline": tl.GetName()}}
 
     async def _grab_still_native(self, label: str) -> bytes:
         script = f"""
-import base64, glob, os, shutil, tempfile
+import base64, glob, os, shutil, tempfile, time
 proj = resolve.GetProjectManager().GetCurrentProject()
 tl = proj.GetCurrentTimeline()
 album = proj.GetGallery().GetCurrentStillAlbum()
@@ -379,6 +385,7 @@ if not still:
     raise RuntimeError("Timeline.GrabStill returned nothing (not on the Color page?)")
 tmp = tempfile.mkdtemp(prefix="resolve_still_")
 try:
+    time.sleep({STILL_SETTLE_S})  # GrabStill returns before the still's image exists -- see STILL_SETTLE_S
     exported = album.ExportStills([still], tmp, {label!r}, "png")
     pngs = glob.glob(os.path.join(tmp, "*.png"))
     if not exported or not pngs:

@@ -13,8 +13,15 @@ community's `gallery_stills.grab_and_export` "since native has no
 stills/Gallery tool of its own". True of native's *tool list*, wrong as a
 conclusion: `Timeline.GrabStill` + `GalleryStillAlbum.ExportStills` are in the
 scripting API and `run_script_unsafe` can read the exported PNG back, so the
-whole thing runs native-only now (verified live; community is only the
-client's fallback).
+whole thing runs native-only now (community is only the client's fallback).
+
+The port's first run against test1 reported 0 changed pixels, on vs off.
+Not a harmless toggle -- a stale still: GrabStill returns its GalleryStill
+before the image behind it exists, and ExportStills called straight after
+exports old content with no error (see resolve_client.STILL_SETTLE_S).
+Settled by grabbing native and community side by side in all three states:
+pixel-identical once native waits 0.5s between the two calls, and the grain
+delta reproduces the original measurement exactly (3,223 px, 1 luma level).
 
 Why proof-by-still, not just trusting the bool SetNodeEnabled returns:
 `GetToolsInNode()` keeps listing a tool even when its node is disabled (a

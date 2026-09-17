@@ -163,8 +163,26 @@ result = {{"timeline": tl.GetName(), "page": resolve.GetCurrentPage()}}
                 timeout=30,
             )
             expect(r == {"timeline": MEDIA_TIMELINE, "page": "color"}, r)
-            png = await client.grab_still("validate_client")
-            return expect(png.startswith(PNG_MAGIC), f"{len(png)} byte PNG")
+
+            # A PNG header proves nothing: a still exported too soon after
+            # GrabStill is a perfectly valid PNG of the *wrong* content (see
+            # resolve_client.STILL_SETTLE_S). testsrc2 changes every frame, so
+            # make the grab prove it follows the playhead: A != B, and A == A.
+            async def grab_at(offset_frames):
+                await client.run_script(
+                    f"""
+tl = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline()
+start = tl.GetStartTimecode()
+result = tl.SetCurrentTimecode(start[:-2] + {format(offset_frames, '02d')!r})
+"""
+                )
+                return await client.grab_still(f"validate_client_{offset_frames}")
+
+            first, moved, back = await grab_at(0), await grab_at(20), await grab_at(0)
+            expect(first.startswith(PNG_MAGIC), "not a PNG")
+            expect(first != moved, "still did not change when the playhead moved 20 frames -- stale grab")
+            expect(first == back, "same frame grabbed twice differs -- stale grab")
+            return f"{len(first)} byte PNG, follows the playhead"
 
         async def render_ok():
             # bench_tl_media is still current from the grab_still check

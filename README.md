@@ -1469,12 +1469,27 @@ was used only for the one piece native has no tool for (Gallery stills).
 **Correction (2026-09-17): "native can't do stills" was wrong.** Native ships no stills
 *tool*, but `Timeline.GrabStill()` + `GalleryStillAlbum.ExportStills()` are in the scripting
 API and `run_script_unsafe` can read the exported PNG back (and delete the still again, so
-the Gallery is left as found). Verified live with the community server not even started:
-1920×1080 PNG, pixel-identical across repeated grabs. `grain_timeline_toggle.py` now goes
-through `ResolveClient.grab_still()` and takes `--project/--timeline/--node`, so its code
-path can be exercised against the fixture; the pixel-diff numbers below are from the
-original community-stills run against `test1` and have **not** been re-measured since the
-port — that needs a fresh go-ahead to touch the real project.
+the Gallery is left as found). `grain_timeline_toggle.py` now goes through
+`ResolveClient.grab_still()`, runs with the community server not even started, and takes
+`--project/--timeline/--node`.
+
+**…and the port immediately found a real trap: `GrabStill()` returns before the still's
+image exists.** Re-run against `test1` (with a fresh go-ahead), the native port reported **0
+changed pixels** on vs off — reading exactly like "the toggle does nothing". Grabbing native
+and community side by side showed otherwise: native's still differed from community's in
+*every* pixel (max delta 73 — a different frame altogether), and repeated native grabs agreed
+with each other, so "grab until two match" doesn't catch it either. `ExportStills` called
+straight after `GrabStill` exports stale content — no error, a valid PNG, perfectly
+repeatable. Community never showed this only because its `grab_and_export` happens to
+`time.sleep(0.5)` between the two calls. With the same 0.5 s wait
+(`resolve_client.STILL_SETTLE_S`), native and community stills are **pixel-identical in all
+three states** (on / off / restored), and the native-only run reproduces the original
+measurement exactly: **3,223 of 2,073,600 pixels shift by 1 luma level; 0 pixels differ
+after restore.** `test1` left as found (node 1 still `["OFX: Film Grain"]`). The smoke test
+had been fooled too — it only checked for a PNG header — so `validate_client.py` now makes
+the grab prove it follows the playhead (frame A ≠ frame B, frame A = frame A again), and
+that check was confirmed to fail with the wait set to 0. 0.5 s is what held on this rig at
+1080p; nothing in the API signals readiness, so a heavier grade or 4K may want more.
 
 **[grain_timeline_toggle.py](pipelines/mcp-benchmark/grain_timeline_toggle.py) — grade
 applied to the whole timeline, not per clip.** `Timeline.GetNodeGraph()` is a real, distinct
