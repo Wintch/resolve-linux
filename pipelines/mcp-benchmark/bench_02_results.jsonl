@@ -1,10 +1,10 @@
-{"label": "batch_rename", "seconds": 0.07412466599998879, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
-{"label": "batch_rename", "seconds": 0.07842536099997233, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
-{"label": "batch_rename", "seconds": 0.07071330799999487, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
-{"label": "batch_rename", "seconds": 0.07335219699962181, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
-{"label": "batch_rename", "seconds": 0.07031480100022236, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
-{"label": "batch_rename", "backend": "community-compound", "seconds": 0.44971602100031305, "round_trips": 9, "is_error": false, "result_preview": null}
-{"label": "batch_rename", "backend": "community-compound", "seconds": 0.08921126800032653, "round_trips": 9, "is_error": false, "result_preview": null}
-{"label": "batch_rename", "backend": "community-compound", "seconds": 0.09260023300021203, "round_trips": 9, "is_error": false, "result_preview": null}
-{"label": "batch_rename", "backend": "community-compound", "seconds": 0.0860439180000867, "round_trips": 9, "is_error": false, "result_preview": null}
-{"label": "batch_rename", "backend": "community-compound", "seconds": 0.09087408599998525, "round_trips": 9, "is_error": false, "result_preview": null}
+{"label": "batch_rename", "seconds": 0.0779996420005773, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.07462733900047169, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.0741311380006664, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.07424113399974885, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "seconds": 0.07422244900044461, "is_error": false, "result_preview": "{\"result\": [\"Clip 01\", \"Clip 02\", \"Clip 03\", \"Clip 04\", \"Clip 05\", \"Clip 06\", \"Clip 07\", \"Clip 08\"]}", "backend": "native", "round_trips": 1}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.4998061759997654, "round_trips": 9, "is_error": false, "result_preview": null}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.12033973300003709, "round_trips": 9, "is_error": false, "result_preview": null}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.11945622600069328, "round_trips": 9, "is_error": false, "result_preview": null}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.11639721900064615, "round_trips": 9, "is_error": false, "result_preview": null}
+{"label": "batch_rename", "backend": "community-compound", "seconds": 0.12606438800048636, "round_trips": 9, "is_error": false, "result_preview": null}

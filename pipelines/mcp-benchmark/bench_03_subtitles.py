@@ -57,7 +57,7 @@ from pathlib import Path
 
 SCRATCH_DIR = Path.home() / "Videos" / "mcp-bench-scratch"
 
-from bench_lib import native_session, timed_call
+from bench_lib import REQUIRE_FIXTURE_PROJECT, native_session, timed_call
 
 SPEECH_TEXT = (
     "This is a synthetic test clip used to validate automatic subtitle "
@@ -112,7 +112,7 @@ async def main():
     print(f"Synthesized speech: {wav_path} ({wav_path.stat().st_size} bytes)")
 
     try:
-        script = SETUP_AND_RUN_SCRIPT % {"wav_path": str(wav_path)}
+        script = REQUIRE_FIXTURE_PROJECT + SETUP_AND_RUN_SCRIPT % {"wav_path": str(wav_path)}
         async with native_session() as session:
             r = await timed_call(session, "run_script", {"script": script, "timeout": 30}, label="create_subtitles")
 

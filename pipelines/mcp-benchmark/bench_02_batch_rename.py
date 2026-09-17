@@ -29,13 +29,12 @@ bench_01/setup_bench_project.py) starts from a known state.
 Run: ~/resolve-install/davinci-resolve-mcp/venv/bin/python bench_02_batch_rename.py
 Requires: setup_bench_project.py already run once.
 """
-import asyncio
 import json
 import statistics
 import time
 from pathlib import Path
 
-from bench_lib import community_session, native_session, select_fixture_timeline, timed_call, write_results
+from bench_lib import community_session, native_session, run_main, select_fixture_timeline, timed_call, write_results
 
 REPS = 5
 RESULTS_FILE = Path(__file__).parent / "bench_02_results.jsonl"
@@ -147,4 +146,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run_main(main)

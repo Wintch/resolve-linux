@@ -45,6 +45,7 @@ Usage:
 """
 import asyncio
 import base64
+import glob
 import json
 import subprocess
 import tempfile
@@ -82,6 +83,10 @@ class ResolveClient:
         self._stack = None
         self.native = None
         self._community = None
+        # (capability, why native failed) for every call community had to
+        # serve. Native-first is a standing rule here, so a fallback is never
+        # silent: callers and validate_client.py can assert this stays empty.
+        self.fallbacks = []
 
     async def __aenter__(self):
         self._stack = AsyncExitStack()
@@ -271,6 +276,7 @@ result = [by_path[p].GetName() for p in paths]
         before the API answers again -- that call is left to the operator."""
         outdir = Path(outdir)
         outdir.mkdir(parents=True, exist_ok=True)  # the sandboxed script can't
+        wall_start = time.time()
         started = await self.run_script(
             f"""
 outdir, name, preset = {str(outdir)!r}, {name!r}, {preset!r}
@@ -317,26 +323,38 @@ result = {{"job_id": job_id, "timeline": tl.GetName()}}
                     raise ResolveError(f"render {job_id} not finished after {timeout_s:.0f}s, stopped: {status}")
                 await asyncio.sleep(poll_s)
         finally:
-            await self.run_script(
-                f"result = resolve.GetProjectManager().GetCurrentProject().DeleteRenderJob({job_id!r})",
-                label="render_cleanup",
-            )
+            # best effort: if Resolve is wedged this fails too, and must not
+            # replace the error that actually explains what happened
+            try:
+                await self.run_script(
+                    f"result = resolve.GetProjectManager().GetCurrentProject().DeleteRenderJob({job_id!r})",
+                    label="render_cleanup",
+                )
+            except ResolveError:
+                pass
 
         record = {**started, "preset": preset, "wall_s": round(time.monotonic() - t0, 2), "status": status}
         if status.get("JobStatus") != "Complete":
             raise ResolveError(f"render ended as {status.get('JobStatus')}: {status}")
 
-        files = sorted(outdir.glob(f"{name}*"))
+        # only files this render wrote: an older "<name>_v1.mov" shares the prefix
+        files = sorted(
+            (f for f in outdir.glob(f"{glob.escape(name)}*") if f.is_file() and f.stat().st_mtime >= wall_start - 1),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
         if not files:
-            raise ResolveError(f"render reported Complete but wrote no {name}* under {outdir}")
+            raise ResolveError(f"render reported Complete but wrote no new {name}* under {outdir}")
         record["file"] = str(files[0])
-        record["ffprobe"] = _ffprobe(files[0])
+        # subprocess work goes to a thread: a long file's loudness pass would
+        # otherwise stall the event loop both MCP sessions live on
+        record["ffprobe"] = await asyncio.to_thread(_ffprobe, files[0])
         if not record["ffprobe"].get("streams"):
             raise ResolveError(f"render output isn't a readable media file: {record}")
 
         has_audio = any(st.get("codec_type") == "audio" for st in record["ffprobe"]["streams"])
         if loudness_gate and has_audio:
-            record["loudness"] = audio_loudness_check.check_file(str(files[0]))
+            record["loudness"] = await asyncio.to_thread(audio_loudness_check.check_file, str(files[0]))
             if not record["loudness"]["pass"]:
                 raise ResolveError(f"loudness gate FAILED for {files[0]} (file kept): {record['loudness']}")
         else:
@@ -369,6 +387,7 @@ result = {{"job_id": job_id, "timeline": tl.GetName()}}
         try:
             return await self._grab_still_native(label)
         except ResolveError as native_exc:
+            self.fallbacks.append(("grab_still", str(native_exc)[:300]))
             try:
                 return await self._grab_still_community(label)
             except ResolveError as community_exc:

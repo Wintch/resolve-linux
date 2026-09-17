@@ -18,11 +18,10 @@ Run: ~/resolve-install/davinci-resolve-mcp/venv/bin/python bench_01_simple.py
 Requires: setup_bench_project.py already run once, Resolve already running
 (this repo's own resolve_power.py / launch_resolve can start it).
 """
-import asyncio
 import statistics
 from pathlib import Path
 
-from bench_lib import community_session, native_session, select_fixture_timeline, timed_call, write_results
+from bench_lib import community_session, native_session, run_main, select_fixture_timeline, timed_call, write_results
 
 REPS = 10
 RESULTS_FILE = Path(__file__).parent / "bench_01_results.jsonl"
@@ -103,4 +102,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run_main(main)

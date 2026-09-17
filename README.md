@@ -1452,7 +1452,28 @@ generator clips have no node graph to grab a still from), and ends with negative
 proving failures are loud: 17 checks, all passing live on 21.1.0.17, including a real render
 measured at −14.04 LUFS by the gate. The benchmarks also gained a guard after one was caught
 measuring the wrong timeline: they all address "the current timeline", so they now select
-`bench_tl` and verify its 8 clips first, and exit non-zero on any failed call.
+`bench_tl` and verify its 8 clips first, and exit non-zero on any failed call. That guard
+does three more things, each added for a reason found live:
+
+- **It refuses to run against any project but `MCP-Benchmark`.** These scripts rename clips,
+  import media and create timelines in whatever project is *current* — with the real `test1`
+  left open, `bench_03` would have imported its WAV and built a timeline there. Verified:
+  with `test1` open all three now stop with one line and `test1` is untouched.
+- **It pins the GUI to the Edit page, because the active page is part of the measurement.**
+  The identical 8-clip native rename takes ~73 ms on Edit/Color and **~166 ms on Deliver**
+  (reproducible, 2.2×) — enough to flip bench_02's native-vs-community verdict depending on
+  nothing but where the GUI was last left. Any timing in this repo taken on Deliver is
+  pessimistic for timeline edits.
+- **It reports as one line.** The MCP SDK runs every session inside two nested anyio task
+  groups, which re-raise anything crossing them as `ExceptionGroup(ExceptionGroup(exc))` — so
+  an `except SomeError` around a session never matches and the real message lands under a
+  60-line traceback. `bench_lib._session` unwraps a group holding exactly one exception.
+
+`ResolveClient` also records every call community had to serve in `client.fallbacks`
+(capability + why native failed), so a fallback is never silent; `validate_client.py` asserts
+it stays empty. And `render()` only accepts files written by *this* render (a stale
+`<name>_v1.mov` shares the glob prefix), keeps a wedged Resolve's cleanup failure from
+masking the error that explains it, and runs `ffprobe`/loudness off the event loop.
 
 Run anything here with the community checkout's interpreter
 (`~/resolve-install/davinci-resolve-mcp/venv/bin/python <script>`), or build a local venv

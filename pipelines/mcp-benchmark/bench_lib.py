@@ -14,6 +14,7 @@ MCP servers installed on this rig against each other:
 Both speak standard MCP over stdio, so both are driven with the same
 mcp.client.stdio machinery -- no protocol-specific code needed per server.
 """
+import asyncio
 import glob
 import json
 import os
@@ -83,13 +84,33 @@ def _errlog():
 
 
 @asynccontextmanager
+async def _session(params: StdioServerParameters):
+    """One initialized MCP session. The SDK runs each session inside two
+    nested anyio task groups, which re-raise anything crossing them as
+    ExceptionGroup(ExceptionGroup(exc)) -- so an `except FixtureError` around
+    a session never matched and the real message sat at the bottom of a
+    60-line traceback. A group holding exactly one exception is unwrapped
+    back into that exception; a genuine multi-error group is left alone."""
+    try:
+        with _errlog() as errlog:
+            async with stdio_client(params, errlog=errlog) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+    except BaseExceptionGroup as group:
+        leaf = group
+        while isinstance(leaf, BaseExceptionGroup) and len(leaf.exceptions) == 1:
+            leaf = leaf.exceptions[0]
+        if leaf is group:
+            raise
+        raise leaf from None
+
+
+@asynccontextmanager
 async def native_session():
     params = StdioServerParameters(command=NATIVE_BINARY, args=[], env=resolve_env())
-    with _errlog() as errlog:
-        async with stdio_client(params, errlog=errlog) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+    async with _session(params) as session:
+        yield session
 
 
 @asynccontextmanager
@@ -100,11 +121,8 @@ async def community_session(mode: str = "compound"):
     params = StdioServerParameters(
         command=COMMUNITY_PYTHON, args=args, env=resolve_env(), cwd=COMMUNITY_REPO
     )
-    with _errlog() as errlog:
-        async with stdio_client(params, errlog=errlog) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+    async with _session(params) as session:
+        yield session
 
 
 def _flatten_text(content) -> str:
@@ -171,13 +189,46 @@ async def timed_call(
         }
 
 
+FIXTURE_PROJECT = "MCP-Benchmark"
+
+
+class FixtureError(RuntimeError):
+    pass
+
+
+def run_main(main) -> None:
+    """asyncio.run(main()) as the process exit code, with a fixture problem
+    reported as one line instead of a traceback."""
+    try:
+        code = asyncio.run(main())
+    except FixtureError as exc:
+        raise SystemExit(f"fixture check failed: {exc}") from None
+    raise SystemExit(code)
+
+# Prepended to any script that mutates "the current project": these fixtures
+# rename clips, import media and create timelines, and whatever project the
+# operator last had open (a real one, e.g. test1) is what "current" means.
+REQUIRE_FIXTURE_PROJECT = f"""
+_current = resolve.GetProjectManager().GetCurrentProject()
+if _current is None or _current.GetName() != {FIXTURE_PROJECT!r}:
+    raise RuntimeError("current project is " + repr(_current.GetName() if _current else None)
+                       + ", refusing to touch anything but " + {FIXTURE_PROJECT!r} + " -- run setup_bench_project.py")
+"""
+
+
 async def select_fixture_timeline(session: ClientSession, name: str = "bench_tl", clip_count: int = 8) -> None:
     """Make `name` the current timeline and check it still holds the fixture.
     Every benchmark script addresses "the current timeline", so without this
     they silently measure (and rename clips on) whatever was left selected --
     caught live when bench_02 reported 2 round trips instead of 9 because a
-    1-clip timeline happened to be current."""
-    script = f"""
+    1-clip timeline happened to be current.
+
+    Also pins the GUI to the Edit page. The active page is part of what gets
+    measured: the same 8-clip native rename takes ~73ms on Edit/Color and
+    ~166ms on Deliver (reproducible; Deliver redraws more per timeline edit),
+    which is enough to flip bench_02's native-vs-community verdict depending
+    on nothing but where the operator last left the GUI."""
+    script = REQUIRE_FIXTURE_PROJECT + f"""
 proj = resolve.GetProjectManager().GetCurrentProject()
 tl = next((proj.GetTimelineByIndex(i) for i in range(1, proj.GetTimelineCount() + 1)
            if proj.GetTimelineByIndex(i).GetName() == {name!r}), None)
@@ -186,11 +237,14 @@ if tl is None or not proj.SetCurrentTimeline(tl):
 clips = len(tl.GetItemListInTrack("video", 1) or [])
 if clips != {int(clip_count)}:
     raise RuntimeError(f"{{clips}} clips on " + {name!r} + ", fixture wants {int(clip_count)}")
+if not resolve.OpenPage("edit"):
+    raise RuntimeError("could not switch to the Edit page")
 result = clips
 """
     r = await timed_call(session, "run_script", {"script": script}, label="select_fixture_timeline", timeout=20)
     if r["is_error"]:
-        raise SystemExit(f"fixture check failed: {r['result_text']}")
+        error = (r["result_json"] or {}).get("error") or r["result_text"]
+        raise FixtureError(error.strip().splitlines()[-1])
 
 
 def write_results(path, rows) -> None:

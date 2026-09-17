@@ -182,6 +182,7 @@ result = tl.SetCurrentTimecode(start[:-2] + {format(offset_frames, '02d')!r})
             expect(first.startswith(PNG_MAGIC), "not a PNG")
             expect(first != moved, "still did not change when the playhead moved 20 frames -- stale grab")
             expect(first == back, "same frame grabbed twice differs -- stale grab")
+            expect(not client.fallbacks, f"native grab failed, community served it: {client.fallbacks}")
             return f"{len(first)} byte PNG, follows the playhead"
 
         async def render_ok():
