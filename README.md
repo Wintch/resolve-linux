@@ -791,8 +791,8 @@ usable piece does:
 | `sqlite3` | `/opt/resolve/bin/` | Bundled SQLite CLI — useful for inspecting Disk Database project files directly. |
 | `VstScanner` | `/opt/resolve/bin/` | Fairlight VST plugin scanner. |
 | `OFXLoader` | `/opt/resolve/bin/` | OFX plugin load/validate utility. |
-| `DaVinci Control Panels Setup`, `Fairlight Studio Utility` | own dirs | GUI config tools for Blackmagic control-surface/audio hardware — not relevant, no such hardware on this rig. |
-| `BMDPanelDaemon`/`BMDPanelFirmware`/`run_bmdpaneld`, `DaVinciPanelDaemon` | `bin/` | Control-panel hardware daemons (already running as part of the base install, not user-facing tools). |
+| `DaVinci Control Panels Setup`, `Fairlight Studio Utility` | own dirs | GUI config tools for Blackmagic control-surface/audio hardware. *(2026-09-24: no longer "not relevant" — a Speed Editor is now connected, see "Session update" below.)* |
+| `BMDPanelDaemon`/`BMDPanelFirmware`/`run_bmdpaneld`, `DaVinciPanelDaemon` | `bin/` | Control-panel hardware daemons (already running as part of the base install, not user-facing tools) — these are what picked up the Speed Editor below. |
 | `gst-plugin-scanner` | `bin/` | GStreamer plugin discovery, bundled media-format support. |
 
 **Third-party**: Puget Systems' PugetBench for DaVinci Resolve — the best-known
@@ -1885,6 +1885,32 @@ render was still in progress (not after, unlike every other throwaway-artifact c
 this doc) — the job correctly came back `Failed`. Cleaned up via `DeleteRenderJob` on the
 now-stale entry. This was a disposable verification file in a scratch directory, not
 anything from the user's actual edit.
+
+## Session update (2026-09-24): Speed Editor connected, upstream version check
+
+**Blackmagic Speed Editor connected to this rig for the first time.** Picked up by the
+existing `BMDPanelDaemon`/`run_bmdpaneld` control-panel daemon (already running as part
+of the base install, see "Bundled Blackmagic tools" above) with no extra setup on this
+end. User reports it working well in hands-on use. **Not yet independently verified**
+against this repo's own tooling (e.g. whether `resolve_control`'s
+`open_control_panel`/`control_panel_status` MCP actions see it, or whether it holds up
+across a reboot/session change) — flagging that as open, not claiming more than the
+user's own hands-on check covers, per the "user's own eyes" note below.
+
+**Upstream version check, both fronts:**
+
+- **DaVinci Resolve itself**: no release beyond **21.1** (2026-09-08, the native-MCP
+  release already covered above) found as of this check. This rig's installed
+  `21.1.0.17` appears current.
+- **Community `davinci-resolve-mcp` (samuelgursky)**: moved a lot since the last check
+  documented here (v2.103.1 → v2.212.1, 2026-09-07, "AI-driven control via MCP" above).
+  Upstream is now at **v4.8.20** (2026-09-24) — a version-scheme jump (2.x → 4.x) on top
+  of near-daily releases through September, e.g. v4.8.17 "`dry_run="false"` runs the real
+  operation" and v4.8.16 "`organize_clips` honours `create_missing="false"`" — the kind of
+  correctness fix worth having. **Not pulled onto this rig yet**; same upgrade procedure
+  as the v2.212.1 bump applies (`git fetch` + `git merge`, then re-run `validate_client.py`
+  before trusting it) — sizing that as its own session rather than doing it inline here,
+  given how large the version gap is.
 
 ## Why this matters (context, not a how-to)
 
