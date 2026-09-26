@@ -35,7 +35,9 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   `makeresolvedeb`), the real codec/RAM/GPU picture vs. Blackmagic's official spec, and
   everything found running it for real (see "Status" and the session logs below).
 - **[MCP-CAPABILITIES.md](MCP-CAPABILITIES.md)**: the full tool/action catalog for
-  AI-driven control of Resolve via its scripting API, live-probed against a real instance.
+  AI-driven control of Resolve via its scripting API (37 tools, 718 actions as of the
+  latest refresh); live probes and workflow tests against it live in
+  [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
 - **[PERFORMANCE.md](PERFORMANCE.md)**: actionable hardware-performance guide for this
   rig specifically — storage (the big one: the current Media Storage path sustains only
   ~46MB/s write, ~35x slower than the NVMe mount sitting unused), RAM, cache placement,
@@ -136,7 +138,8 @@ doesn't ship a native `.deb`, and doesn't officially support Debian at all (see
   ~90-99% CPU with zero I/O-wait threads (a genuine spin, not a blocked dialog), only
   recoverable by killing and relaunching. Reproduced 3 times via 3 different triggers,
   in both GUI and headless mode. **Investigation paused deliberately, not resolved** —
-  full account and next steps in [MCP-CAPABILITIES.md](MCP-CAPABILITIES.md#final-data-point-before-stopping-thumbnails-stopped-rendering-too).
+  full account and next steps in
+  [pipelines/mcp-benchmark/README.md](pipelines/mcp-benchmark/README.md#final-data-point-before-stopping-thumbnails-stopped-rendering-too).
   Treat any render/export workflow on this rig as unverified until this is root-caused.
 - **MCP (davinci-resolve-mcp v2.103.1) installed**, both the Python compound/granular
   server and the optional Node "advanced" (offline, no-Resolve-required) server, plus all
@@ -410,8 +413,8 @@ or hurts Resolve.
   not reused from `test1` — a clean validation target.
 - **Real source footage**: 10 files from `~/Videos/oldback_nvme` (H.264/HEVC video, AAC
   audio, matching this repo's own codec findings — the same directory
-  [MCP-CAPABILITIES.md](MCP-CAPABILITIES.md) used for the original AAC-decode-failure
-  finding).
+  [pipelines/mcp-benchmark/README.md](pipelines/mcp-benchmark/README.md) used for the
+  original AAC-decode-failure finding).
 - **`prepare_for_resolve.py` run for real, not just `--dry-run`**, against the whole
   directory (`pipelines/prepare-for-resolve/prepare_for_resolve.py ~/Videos/oldback_nvme
   --output-dir ~/Videos/resolve_validation_sources`): all 10 files correctly identified as
@@ -1014,7 +1017,7 @@ Sourced from Blackmagic's official **"Supported Formats and Codecs" PDF, July 20
 (DaVinci Resolve 20, Rocky Linux 8.6 table)** — the only Linux-specific codec matrix
 Blackmagic publishes. **Independently confirmed against 21.0.4 on this exact rig with
 real footage** — not just trusted from the PDF. See
-[MCP-CAPABILITIES.md](MCP-CAPABILITIES.md#1-aac-decode-failure--confirmed-at-the-sample-level-not-just-a-spec-sheet-claim)
+[pipelines/mcp-benchmark/README.md](pipelines/mcp-benchmark/README.md#1-aac-decode-failure--confirmed-at-the-sample-level-not-just-a-spec-sheet-claim)
 for the log-level proof: pushing real AAC-audio camera footage through the render
 pipeline produced hundreds of repeated `IO.Audio | ERROR | Failed to decode the audio
 samples` entries in Resolve's own debug log — not a guess, not container-metadata
@@ -1243,13 +1246,16 @@ connection itself.
 ### Full capability map — live-extracted, not just quoted from the vendor docs
 
 See **[MCP-CAPABILITIES.md](MCP-CAPABILITIES.md)** for the complete tool → action
-catalog (36 tools, **667 actions**, extracted directly from the running server's own
-docstrings, not the vendor README's summary numbers) plus a 41-action live read-only
-probe against the connected Resolve instance — checkpointed to disk every 10 calls so
-a crash mid-run couldn't lose progress. All 41 succeeded, every error came back
-structured (`{code, category, retryable, remediation}`) rather than a raw exception,
-and `media_analysis.capabilities` confirmed the optional extras venv wiring is correct
-end-to-end (found `whisper` at the actual venv path, not just `pip install`-successful).
+catalog (37 tools, **718 actions** as of the latest refresh, extracted directly from the
+running server's own docstrings, not the vendor README's summary numbers). The original
+pass also ran a 41-action live read-only probe against the connected Resolve instance —
+checkpointed to disk every 10 calls so a crash mid-run couldn't lose progress. All 41
+succeeded, every error came back structured (`{code, category, retryable, remediation}`)
+rather than a raw exception, and `media_analysis.capabilities` confirmed the optional
+extras venv wiring is correct end-to-end (found `whisper` at the actual venv path, not
+just `pip install`-successful) — see
+[pipelines/mcp-benchmark/README.md](pipelines/mcp-benchmark/README.md) for that probe and
+every live workflow test run since.
 
 ### The fork question — answered with a real workflow test, not just reading the code
 
@@ -1259,7 +1265,7 @@ looked thin." Having read the code and docs, that assessment didn't hold on pape
 guarantees, and an explicit "what this does not do" section are not signs of a thin
 wrapper. But reading the code isn't the same as driving it — a real test (import AAC
 footage, build a timeline, render draft quality; full account in
-[MCP-CAPABILITIES.md](MCP-CAPABILITIES.md#real-workflow-test-aac-audio-timeline-edit-draft-render--and-what-it-actually-found))
+[pipelines/mcp-benchmark/README.md](pipelines/mcp-benchmark/README.md#real-workflow-test-aac-audio-timeline-edit-draft-render--and-what-it-actually-found))
 found a genuine, narrower gap. Short version, once you strip away the individual repro
 steps: **the read path is solid; the moment a render fails to complete, Resolve hangs
 badly** — not a graceful failure, not a clean error, an actual stuck/unrecoverable state
