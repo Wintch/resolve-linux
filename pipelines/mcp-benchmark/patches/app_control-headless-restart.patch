@@ -1,0 +1,33 @@
+From e7bcfd1842219bb0d48b344d89c5e8815a9d02bd Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 1 Oct 2026 19:17:11 -0300
+Subject: [PATCH] fix(app-control): restart_resolve_app relaunches headless on
+ Linux
+
+Linux's restart_resolve_app() launched Resolve with zero args, always
+GUI mode, even when it was running -nogui before the restart (e.g. via
+an MCP restart_app tool call). resolve_headless.py already does this
+correctly for a fresh start; this path didn't. Pass -nogui to match.
+
+Found 2026-10-02: a restart_app MCP call left a headless deployment
+stuck in GUI mode for hours with no error surfaced anywhere.
+---
+ src/utils/app_control.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/utils/app_control.py b/src/utils/app_control.py
+index 60f4e31..42e7d1f 100644
+--- a/src/utils/app_control.py
++++ b/src/utils/app_control.py
+@@ -260,7 +260,7 @@ def restart_resolve_app(resolve_obj, wait_seconds: int = 5) -> bool:
+         elif platform.system().lower() == 'windows':
+             subprocess.Popen([resolve_path])
+         elif platform.system().lower() == 'linux':
+-            subprocess.Popen([resolve_path])
++            subprocess.Popen([resolve_path, '-nogui'])
+         
+         return True
+     except Exception as e:
+-- 
+2.47.3
+

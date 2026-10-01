@@ -264,3 +264,50 @@ before/after catalog counts.
 the AAC workflow test above against v4.8.22 / Resolve 21.1 — those findings are
 still open per the "what's next" list above, unrelated to and unaffected by
 this MCP server version bump.
+
+
+## Update (2026-10-02): `restart_app` was silently dropping headless mode
+
+A health re-check (from the `bridgeai`/Hermes side — see that project's
+`HERMES_ARCHITECTURE.md` for the full incident) found `resolve_headless.py
+status` reporting `headless: False` hours into what should have been a
+headless-only deployment. Root cause, confirmed via `ps -o pid,ppid`:
+Resolve's parent process was the MCP `server.py` itself — a `restart_app`
+MCP tool call (`src/granular/resolve_control.py:restart_app` →
+`src/utils/app_control.py:restart_resolve_app`) had cleanly quit and
+relaunched Resolve. On Linux, that relaunch is
+`subprocess.Popen([resolve_path])` — **no `-nogui`, no args at all** —
+unlike `resolve_headless.py`, which always launches with `-nogui`. Any
+`restart_app` call on this community server silently drops headless mode,
+with no error or warning anywhere in logs.
+
+**Fix**: one line, Linux branch only —
+`subprocess.Popen([resolve_path, '-nogui'])`. Patch file:
+[`patches/app_control-headless-restart.patch`](patches/app_control-headless-restart.patch),
+applies cleanly to `~/resolve-install/davinci-resolve-mcp`'s
+`src/utils/app_control.py`. Committed locally in that repo
+(`e7bcfd1`) — **not pushed upstream**, since `origin` there is
+`samuelgursky/davinci-resolve-mcp` (the original author's repo, not
+ours). That local commit is at risk of being lost on the next `git pull
+--ff-only` update of the vendored copy (see the 2026-09-26 update above —
+this repo *does* periodically pull fresh upstream versions), so the
+patch file here is the actual source of truth going forward. **After any
+future `git pull`/reinstall of the vendored `davinci-resolve-mcp`,
+reapply with:**
+
+```bash
+cd ~/resolve-install/davinci-resolve-mcp
+git apply ~/Documents/resolve-linux/pipelines/mcp-benchmark/patches/app_control-headless-restart.patch
+```
+
+**Also fixed as part of the same incident** (operator confirmed Resolve
+wasn't in use at the time, so this was safe to do live): the already-GUI
+instance was cycled back to headless. `resolve_headless.py stop` refused
+(not answering scripting calls); `--force` reported success but the
+process was still alive (the already-known unreliable-force-stop
+behavior — always verify with `pgrep`, not the tool's own report); manual
+`SIGTERM` → `SIGKILL` was needed, which triggered the `crash_archive.txt`
+gotcha documented earlier in this project (moved aside, not deleted);
+`resolve_headless.py start` then succeeded cleanly. Confirmed via
+`status`: `running: True, headless: True`, responsive. The MCP server
+process itself never went down through any of this.
