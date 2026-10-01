@@ -10,10 +10,26 @@
 # required, but no authorization protocol specified"). Same logic as
 # bench_lib.resolve_env() -- keep the two in sync.
 #
-# Usage: resolve_mcp_wrapper.sh native|community [server args...]
+# Usage: resolve_mcp_wrapper.sh native|community|headless [server args...]
+#
+# `headless` (2026-10-01): same community backend, but wrapped in
+# davinci-resolve-mcp's own scripts/resolve_headless.py -- `guard` (refuse
+# to start on top of an interactive session already open on this rig),
+# `start` (boot -nogui, wait until scriptable), `run`, then `stop` (but
+# only if it was the one that started Resolve). Built for an unattended
+# remote caller (an AI agent's MCP client, over SSH, no one at the
+# keyboard to notice a crash or a stolen session) -- `native`/`community`
+# assume a human already has Resolve open or is at the console to deal
+# with it, which doesn't hold for that caller. Uses the same
+# DISPLAY/XAUTHORITY discovery above (an SSH-invoked process has neither
+# by default -- confirmed the hard way: resolve_headless.py called bare
+# over SSH aborts Resolve's Qt init with SIGABRT in QApplication::init,
+# the same failure this script's own header already describes, just
+# surfacing through a different unprivileged caller). See README.md,
+# "Session update (2026-10-01): headless mode for a remote MCP caller".
 set -euo pipefail
 
-backend="${1:?usage: $0 native|community [server args...]}"
+backend="${1:?usage: $0 native|community|headless [server args...]}"
 shift
 
 export DISPLAY="${DISPLAY:-:0}"
@@ -42,8 +58,14 @@ case "${backend}" in
         cd "${repo}"
         exec "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
         ;;
+    headless)
+        repo="${RESOLVE_MCP_COMMUNITY_REPO:-${HOME}/resolve-install/davinci-resolve-mcp}"
+        cd "${repo}"
+        exec "${repo}/venv/bin/python" "${repo}/scripts/resolve_headless.py" run -- \
+            "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
+        ;;
     *)
-        echo "unknown backend '${backend}' (want native|community)" >&2
+        echo "unknown backend '${backend}' (want native|community|headless)" >&2
         exit 2
         ;;
 esac

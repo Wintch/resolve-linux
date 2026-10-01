@@ -1918,6 +1918,69 @@ user's own hands-on check covers, per the "user's own eyes" note below.
   before trusting it) — sizing that as its own session rather than doing it inline here,
   given how large the version gap is.
 
+## Session update (2026-09-27): forum outreach — updated Boris Kovalev's original thread
+
+Posted an update to the original `davincirecode10.sh` thread
+([viewtopic.php?f=21&t=136365](https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=136365))
+pointing at this repo's `prepare_for_resolve.py` as a from-scratch Python rewrite of that
+script (credit to Boris Kovalev and the thread's contributors kept explicit — reimplemented
+idea, not a fork of his code), plus a current-as-of-21.1 answer to "is a script like this
+still needed": **yes, but narrower than in 2021.**
+
+- **AAC decode is still fully unsupported on Linux, any edition** — unchanged across every
+  point release checked (21.0.2 → 21.1, see "Linux-relevant changes tracked across recent
+  point releases" above). This is now the main reason the script still earns its keep.
+- **VFR** handling is still relevant too — a general Resolve quirk, not Linux-specific.
+- **H.264/HEVC is more nuanced now, not a hard Linux limitation**: Studio + an NVIDIA GPU
+  that `GPUDetect` correctly resolves to CUDA decodes/encodes it natively (NVENC/NVDEC) —
+  the real trap is the Wayland/XWayland `GPUDetect`-CUDA-correlation bug documented above
+  under "Codec support on Linux", which silently drops those codecs with no error. Native
+  X11 fixes it. Free edition, no NVIDIA GPU, or stuck on Wayland: still need to pre-transcode.
+- **AC3** is already fixed (decodes since 18.5b1) — no longer needs special-casing, matching
+  what the rewrite's `SAFE_AUDIO_CODECS` already assumed.
+
+Deliberately left this repo's MCP/AI-driven-control work out of that post — scoped to a
+separate follow-up mention there, not this one.
+
+## Session update (2026-10-01): headless mode for a remote MCP caller
+
+New consumer for this rig's MCP setup: a remote AI agent (Hermes, running on a separate
+machine, no GUI, reached over SSH) wired up via `hermes mcp add davinci-resolve --command ssh
+--args ...`, on top of the existing `community` backend. Surfaced a gap neither `native` nor
+`community` needed to handle before, because both assume a human is already at this rig with
+Resolve open (or about to open it) — a remote, unattended caller can't assume that.
+
+**Symptom**: invoking `scripts/resolve_headless.py run -- <community server>` bare over SSH
+crashed Resolve on launch, even with `-nogui`: `SIGABRT` in `QApplicationPrivate::init`
+(see `~/.local/share/DaVinciResolve/logs/ResolveDebug.txt`). Same underlying cause this
+script's own header already documents for `native`/`community` (no `DISPLAY`/`XAUTHORITY` in
+a static env block) — just reached through a third path: an SSH session has neither, same as
+a `.mcp.json` static block doesn't, and `resolve_headless.py` (upstream, not this repo's code)
+doesn't set them itself.
+
+**Fix**: added a `headless` backend to `resolve_mcp_wrapper.sh`, reusing this script's
+existing `DISPLAY`/`XAUTHORITY` discovery (the `.mutter-Xwaylandauth.<random>` glob above,
+already correct — new login means a new random suffix, so it's re-discovered every call, not
+cached) ahead of `resolve_headless.py run --`, which adds the guard/start/wait-until-
+scriptable/stop lifecycle `native`/`community` don't have and this caller needs (nobody at
+the keyboard to notice a stolen session or restart a crashed one). Community backend only —
+hasn't been needed for `native` yet.
+
+**Validated, cold start, this rig**:
+```
+OK: nothing running; safe to start a headless instance.
+starting: /opt/resolve/bin/resolve -nogui
+ready in 6.0s
+stopped in 0.5s
+```
+`guard` correctly detected a clean state, `-nogui` booted in 6.0s (not the many-minutes worry
+an earlier debugging pass had, once the env was actually right), and `stop` tore down cleanly
+afterward since this run was the one that started it.
+
+Hermes-side config (the operator's `bridgeai`/`HERMES_ARCHITECTURE.md` project, not this
+repo): `hermes mcp add davinci-resolve --command ssh --args iashur
+/home/iam/Documents/resolve-linux/pipelines/mcp-benchmark/resolve_mcp_wrapper.sh headless`.
+
 ## Why this matters (context, not a how-to)
 
 Resolve was already validated working on the user's main system. This separate rig
