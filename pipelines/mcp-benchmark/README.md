@@ -311,3 +311,61 @@ gotcha documented earlier in this project (moved aside, not deleted);
 `resolve_headless.py start` then succeeded cleanly. Confirmed via
 `status`: `running: True, headless: True`, responsive. The MCP server
 process itself never went down through any of this.
+
+
+## Update (2026-10-02): community server bumped to v4.8.26, headless patch reapplied, re-validated
+
+The server's own update check reported v4.8.26 available (4 releases past
+v4.8.22). Before pulling, checked whether any of them touched the
+`restart_app` headless-drop bug patched above: only one commit in the
+range touched `src/utils/app_control.py` (v4.8.25, `open_project_settings`
+/`open_preferences` now report "not supported" instead of failing
+silently) — `restart_resolve_app` itself is untouched upstream, so the
+patch is still needed. Other changes: two `timeline_frame` capture fixes
+(v4.8.23/24 — capture returns to the caller's page, leaves `TargetDir`/
+`CustomName` alone) and dead `layout_presets` helpers removed (v4.8.26).
+No `requirements.txt` change.
+
+**Upgrade, done via the documented reapply procedure (validates it, not
+just the code):** pre-update HEAD kept as branch `backup/pre-v4.8.26`;
+the local `package.json` `allowScripts` tweak stashed; `main` moved to
+`origin/main` (v4.8.26); `git apply --check` then `git apply` of
+[`patches/app_control-headless-restart.patch`](patches/app_control-headless-restart.patch)
+— applied cleanly (now at line 265, offset by two new import lines);
+stash popped back cleanly; patch re-committed locally.
+
+**Verified:**
+- `npm install` (0 vulnerabilities), `npm run smoke` → reports 4.8.26;
+  updated `server.py` imports cleanly under the existing venv.
+- Vendor offline suite: **3992 tests, 2 failures, 18 skipped**. Both
+  failures are in `tests/test_platform_paths.py`
+  (`test_defaults_used_when_env_unset`,
+  `test_nonexistent_env_paths_fall_back_to_defaults`): the test mocks
+  macOS but the code returns this rig's real Linux
+  `/opt/resolve/libs/Fusion/fusionscript.so`. **Not a regression** — the
+  same 2 fail identically on v4.8.22 today (checked in a throwaway `git
+  worktree`). Environment-dependent; the 2026-09-26 run reported 0
+  failures, discrepancy unexplained.
+- `validate_client.py` live against the `MCP-Benchmark` fixture on
+  Resolve 21.1.0.17, **headless** (`-nogui`): **ALL CHECKS PASSED** on
+  two consecutive runs, including one starting from the `deliver` page.
+  The very first run failed one check (`grab_still`: the fixture's
+  `resolve.OpenPage("color")` left the page on `deliver`) and that never
+  reproduced — not in 2 reruns, nor when calling `OpenPage` directly
+  against the same instance (worked every time). Recorded as a one-off
+  transient, likely the first page switch after a fresh headless boot,
+  not confirmed.
+- **End-to-end through Hermes**: after restarting `aibridge-hermes-agent`
+  (so its MCP stdio session respawned the server from the new code), a
+  read-only `resolve_control get_version` round trip through the
+  forced-command `iashur-mcp` key returned `mcp.version: 4.8.26` and
+  Resolve 21.1.0.17. Resolve itself stayed up and headless throughout.
+
+**Also fixed — `bench_lib.py` drifted from the wrapper:**
+`resolve_mcp_wrapper.sh` learned the native-X11 cookie location
+(`/tmp/xauth_*`) on 2026-10-01, but `bench_lib._find_xauthority()` —
+used by `validate_client.py` and the `bench_*` scripts — didn't, despite
+the wrapper's own "keep the two in sync" note. Over SSH on the X11
+session it would have fallen through to `~/.Xauthority` or nothing.
+Synced (same lookup order as the wrapper); confirmed it now resolves the
+live `/tmp/xauth_*` cookie with `XAUTHORITY` unset.

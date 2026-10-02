@@ -49,7 +49,11 @@ def _find_xauthority():
     Xorg/KDE session case, see README's 2026-09-07 update). Otherwise take
     the newest mutter cookie -- a stale one from a crashed session can linger
     next to the live one. Returns None rather than "" when nothing is found:
-    an empty XAUTHORITY is worse than an unset one."""
+    an empty XAUTHORITY is worse than an unset one.
+
+    Native X11 session (sddm-spawned, an SSH caller has no XAUTHORITY): the
+    per-session cookie is /tmp/xauth_<random>, not the greeter's
+    /run/sddm/xauth_*. Same lookup order as resolve_mcp_wrapper.sh."""
     current = os.environ.get("XAUTHORITY")
     if current and os.path.isfile(current):
         return current
@@ -57,6 +61,9 @@ def _find_xauthority():
     matches = glob.glob(os.path.join(runtime_dir, ".mutter-Xwaylandauth.*"))
     if matches:
         return max(matches, key=os.path.getmtime)
+    x11_matches = glob.glob("/tmp/xauth_*")
+    if x11_matches:
+        return max(x11_matches, key=os.path.getmtime)
     fallback = os.path.expanduser("~/.Xauthority")
     return fallback if os.path.isfile(fallback) else None
 
