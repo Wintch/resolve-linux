@@ -369,3 +369,90 @@ the wrapper's own "keep the two in sync" note. Over SSH on the X11
 session it would have fallen through to `~/.Xauthority` or nothing.
 Synced (same lookup order as the wrapper); confirmed it now resolves the
 live `/tmp/xauth_*` cookie with `XAUTHORITY` unset.
+
+
+## Update (2026-10-02): headless Resolve dies with the graphical session
+
+Found while starting the evaluation below. The headless instance
+(`resolve -nogui`, started under the KDE/X11 session with `DISPLAY=:0` and
+that session's `/tmp/xauth_*` cookie) **outlives the session it was
+started in, but stops answering scripting**. Around 00:19 the rig's
+graphical session switched from KDE/X11 to GNOME/Wayland for VR work
+(`monado-service`, a `hello_xr` run, a Monado build). Afterwards:
+
+- the `/tmp/xauth_*` cookie was gone; only a new
+  `.mutter-Xwaylandauth.*` existed;
+- the Resolve process was still alive, and `resolve_headless.py status`
+  still reported `running: True, headless: True` — **status alone does
+  not catch this**;
+- `DaVinciResolveScript.scriptapp("Resolve")` hung (killed at 20s), so
+  every MCP server and every client (Hermes included) is effectively down.
+
+`-nogui` doesn't mean "no display dependency": Resolve's Qt still binds to
+the X server it was launched against. Recovery is a restart under an X11
+session, which was **not** done here: VR testing was using the GPU at the
+time, and Resolve doesn't run under Wayland on this rig (see the session
+notes above). Ties into the still-unapplied SDDM X11/Wayland switch
+scripts: switching sessions now also means restarting headless Resolve.
+
+A real liveness check needs a scripting round trip with a timeout (e.g.
+`scriptapp` + `GetCurrentPage()` under `timeout 20`), not just
+`resolve_headless.py status`.
+
+## Evaluation (2026-10-02, paused): `wassermanproductions/unofficial-davinci-mcp`
+
+Candidate third MCP server, picked from a survey of the alternatives (end
+of this section). Evaluated at upstream commit `22580fb` (v1.1.0,
+2026-07-20, 27 commits), cloned to
+`~/resolve-install/unofficial-davinci-mcp` with its own venv (core install
+only: `numpy`; the `voice` and `beats` extras were not installed).
+Not wired into Hermes or `.mcp.json`.
+
+**Code review before running anything:**
+- No arbitrary code execution: the only dynamic import is `__import__` of
+  its own fixed `engines`/`skills` packages (`davinci_mcp/registry.py`).
+- No telemetry. The only HTTP client (`resolve_api._BridgeClient`) talks to
+  an optional in-app bridge, and only if `~/.config/unofficial-davinci-mcp/bridge.json`
+  exists.
+- `subprocess` calls are list-form `ffmpeg`/`ffprobe`, no `shell=True`.
+- Connects to Resolve the standard way (`RESOLVE_SCRIPT_API` /
+  `RESOLVE_SCRIPT_LIB`, then `scriptapp("Resolve")`); never launches it.
+
+**Tool surface (37, listed live with [`udm_probe.py`](udm_probe.py)):**
+- No script-execution tool (unlike native's `run_script_unsafe`).
+- Every live mutating tool (`resolve_import_media`, `resolve_add_markers`,
+  `resolve_apply_lut`, `resolve_set_grade`, `resolve_render`, ...) is
+  `dry_run` first, then `confirm`.
+- Engines that run without Resolve: `probe_media`, `measure_loudness`,
+  `audio_qc`, `mix_plan`, `beat_grid`, `cut_music`, `tighten_dialogue`,
+  `color_match` (bakes `.cube` LUTs), `grade_timeline`,
+  `transcribe_media`/`cut_by_transcript`/`generate_captions` (need
+  `faster-whisper`), FCPXML/EDL/marker-CSV writers.
+- Gap: no MCP `annotations` (`readOnlyHint`/`destructiveHint` unset on all
+  37), so a client can't filter by risk automatically — it has to be done
+  by name.
+- Some tools can touch things outside the fixture (`resolve_project`
+  `open`/`create`, `resolve_timelines` `delete`) — the live test must stay
+  on `MCP-Benchmark`.
+
+**Not yet tested:** anything live against Resolve (blocked by the session
+issue above), and the offline engines. Next step when the rig is back on
+X11: restart headless Resolve, then `resolve_capabilities` →
+`resolve_project_summary` → dry-run/confirm mutations on `MCP-Benchmark`
+only, plus the offline engines on the fixture media.
+
+**Survey of other Resolve MCP servers / integrations (2026-10-02, not
+evaluated here):**
+- Native `ResolveMCP` (in use) and `samuelgursky/davinci-resolve-mcp` (in
+  use) remain the two validated on this rig.
+- Hermes's own plugin catalog has `wassermanproductions/hermes-davinci-resolve-plugin`
+  (14 tools, dry-run by default) — **macOS-only**, and it runs inside
+  Hermes, so it needs Resolve on the same machine as Hermes. Not usable
+  here.
+- OpenClaw: no separate integration needed — `hermes skills search`
+  already queries ClawHub. Its Resolve-related skills are interchange
+  generators and color-science knowledge, none drives Resolve live.
+- Others found, unverified on Linux: `DigitalWorkflowCompany/resolve-mcp`
+  (88 tools, Resolve 21), `hoyt-harness/davinci-mcp-professional`
+  (token-efficient), `lordhoell/davinci-resolve-mcp` (440+ tools, Resolve
+  20), `apvlv/davinci-resolve-mcp`, `Iamkewl/Davinci-MCP`.
