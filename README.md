@@ -43,8 +43,10 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   findings (Reddit/HuggingFace/docs) on open-weight models, local VFX pipelines, and
   techniques worth evaluating before committing to a production workflow. Current
   entries: Lightricks LTX-2.5 VFX toolset (7 IC-LoRAs: native-res editing, restore,
-  SDR→HDR, native HDR, layout→render, alpha matte generation) and the MiniMax H3
-  360° orbit LoRA technique.
+  SDR→HDR, native HDR, layout→render, alpha matte generation); MiniMax H3 360° orbit
+  LoRA technique; Tencent Hunyuan AuK (1.5B speech generation/editing model — TTS,
+  voice cloning, content/acoustic/paralinguistic editing, enhancement, separation,
+  with GGUF port via `audio.cpp`).
 - **[PERFORMANCE.md](PERFORMANCE.md)**: actionable hardware-performance guide for this
   rig specifically — storage (the big one: the current Media Storage path sustains only
   ~46MB/s write, ~35x slower than the NVMe mount sitting unused), RAM, cache placement,
