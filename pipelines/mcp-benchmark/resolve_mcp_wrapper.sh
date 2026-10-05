@@ -71,8 +71,10 @@ case "${backend}" in
     headless)
         repo="${RESOLVE_MCP_COMMUNITY_REPO:-${HOME}/resolve-install/davinci-resolve-mcp}"
         cd "${repo}"
-        exec "${repo}/venv/bin/python" "${repo}/scripts/resolve_headless.py" run -- \
-            "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
+        # via the shim, not resolve_headless.py directly: upstream prints its
+        # status lines to stdout, which corrupts the MCP stdio stream.
+        exec "${repo}/venv/bin/python" "$(dirname "${BASH_SOURCE[0]}")/resolve_headless_stdio.py" \
+            "${repo}" -- "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
         ;;
     *)
         echo "unknown backend '${backend}' (want native|community|headless)" >&2

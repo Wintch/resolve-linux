@@ -1990,6 +1990,28 @@ Hermes-side config (the operator's `bridgeai`/`HERMES_ARCHITECTURE.md` project, 
 repo): `hermes mcp add davinci-resolve --command ssh --args iashur
 /home/iam/Documents/resolve-linux/pipelines/mcp-benchmark/resolve_mcp_wrapper.sh headless`.
 
+## Session update (2026-10-05): making the headless MCP reliable from Hermes
+
+A Hermes run reported `name is required` (`create_timeline_from_clips`), `missing track_type`
+(`add_track`) and `Provide clip_ids ... or clip_infos` (`append_to_timeline`) and fell back to
+ffmpeg. Reproduced live against the `headless` wrapper; two separate causes:
+
+1. **Calling convention, not a headless limitation.** Every community tool has the signature
+   `tool(action: str, params: object|null)`. Arguments must be nested:
+   `media_pool(action="create_timeline_from_clips", params={"name": "...", "clip_ids": [...]})`.
+   Passing `name`/`clip_ids`/`track_type` at the top level is silently dropped by schema
+   validation and the action sees empty params -- exactly the three errors above.
+   A `params` given as a JSON *string* is accepted. Tell the agent's skill to always use
+   `params={...}`.
+2. **Stdout pollution (fixed).** `resolve_headless.py run` prints `starting:` / `ready in` /
+   `reusing the running headless instance` to stdout, which is the MCP JSON-RPC channel;
+   the Python `mcp` client dies with `Invalid JSON: expected value at line 1 column 1`.
+   `resolve_mcp_wrapper.sh headless` now goes through `resolve_headless_stdio.py`, which
+   sends those lines to stderr (fd 1 untouched, so the server's frames still flow).
+
+The only headless restriction that stands is the one already documented: no MCP render queue
+(render with ffmpeg); timeline edits and transforms work.
+
 ## Session update (2026-10-05): Resolve Studio 21.1.1 upgrade & community MCP v4.8.28 bump
 
 Upgraded Resolve Studio from 21.1.0 (`21.1-mrd1.10.1`) to **21.1.1** (`21.1.1-mrd1.10.1`,
