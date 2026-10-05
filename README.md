@@ -2009,6 +2009,14 @@ ffmpeg. Reproduced live against the `headless` wrapper; two separate causes:
    `resolve_mcp_wrapper.sh headless` now goes through `resolve_headless_stdio.py`, which
    sends those lines to stderr (fd 1 untouched, so the server's frames still flow).
 
+Follow-up live battery (same day, throwaway project, `-nogui`): `add_track` (1 -> 2 tracks),
+`get_items`, `append_to_timeline {clip_ids}`, `set_transform {FlipX}` + `get_transform` all work.
+Hermes's own write-up had claimed `add_track`/`get_items` broken and that only `clipInfos` appends
+work; all three claims are false (the keys are snake_case, `clip_ids` is the simple form, and
+`safe_import_media` takes `paths`, not `file_paths`). The corrected, verified recipe for the
+Hermes skill is [`pipelines/mcp-benchmark/HERMES-SKILL.md`](pipelines/mcp-benchmark/HERMES-SKILL.md).
+Cold start flaked once with `Connection closed` on `initialize` and not on 3 later runs (not diagnosed).
+
 The only headless restriction that stands is the one already documented: no MCP render queue
 (render with ffmpeg); timeline edits and transforms work.
 
