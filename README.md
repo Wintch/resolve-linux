@@ -38,6 +38,13 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   AI-driven control of Resolve via its scripting API (37 tools, 718 actions as of the
   latest refresh); live probes and workflow tests against it live in
   [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
+- **[AI-VFX-RESEARCH.md](AI-VFX-RESEARCH.md)**: research log of AI/ML tools and
+  techniques relevant to the post-production workflow on this rig — vetted community
+  findings (Reddit/HuggingFace/docs) on open-weight models, local VFX pipelines, and
+  techniques worth evaluating before committing to a production workflow. Current
+  entries: Lightricks LTX-2.5 VFX toolset (7 IC-LoRAs: native-res editing, restore,
+  SDR→HDR, native HDR, layout→render, alpha matte generation) and the MiniMax H3
+  360° orbit LoRA technique.
 - **[PERFORMANCE.md](PERFORMANCE.md)**: actionable hardware-performance guide for this
   rig specifically — storage (the big one: the current Media Storage path sustains only
   ~46MB/s write, ~35x slower than the NVMe mount sitting unused), RAM, cache placement,
