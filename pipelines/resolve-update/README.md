@@ -203,12 +203,18 @@ Installed now: `21.1-mrd1.10.1` (Resolve 21.1.0.17). Target: **21.1.1**
   as root (`su -`).
 
 ### 2026-10-05 — Resolve 21.1.1 installed and live-validated
-
+ 
 - `install_resolve.sh` run successfully with `DaVinci_Resolve_Studio_21.1.1_Linux.run`.
 - Deb packages built and installed cleanly:
   - `davinci-resolve-studio` `21.1.1-mrd1.10.1`
   - `davinci-resolve-studio-data` `21.1.1-mrd1.10.1`
 - Binary version verified: `DaVinci Resolve Studio Version 21.1.1.0010`.
 - `post_update_driver_check.sh`: all checks passed (Kernel 6.12.111, NVIDIA 595.71.05-1 DKMS installed, all 4 patches applied, rollback kernel readiness confirmed).
-- Live validation: `validate_client.py` against headless Resolve 21.1.1: **ALL CHECKS PASSED** (timeline editing, batch clip rename, LUT roundtrip, media import, native still grab, render + loudness gate, negative assertion checks).
+- Full live verification battery against Resolve 21.1.1 and community MCP v4.8.28:
+  - `validate_client.py` (headless): **ALL 17 CHECKS PASSED** (timeline editing, batch clip rename, LUT roundtrip, media import, native still grab, render + loudness gate, negative assertion checks).
+  - `bench_01_simple.py`: 4 read ops x 10 reps clean on both native and community servers.
+  - `bench_02_batch_rename.py`: batch write passed, clip reset confirmed.
+  - `grain_timeline_toggle.py`: run on real project `test1`, Film Grain node toggle confirmed by pixel diff (3,223 px changed, 0 px on restore).
+  - `bench_03_subtitles.py`: neural speech-to-subtitles (`Timeline.CreateSubtitlesFromAudio`) verified (9 subtitle items generated, 564.6ms).
+  - `render_benchmark.py --list-presets`: all 31 delivery presets listed and ready.
 

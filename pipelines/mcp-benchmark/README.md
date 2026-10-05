@@ -485,11 +485,27 @@ an older checkout needs the old patch from git history).
   failures seen on v4.8.22 and v4.8.26 did not reproduce; still unexplained
   (upstream fix or environment-dependent).
 
-**Live verification (2026-10-05):** `validate_client.py` run against
-live DaVinci Resolve Studio 21.1.1.10 (headless): **ALL CHECKS PASSED**
-(project loading, batch renaming, LUT generation/deletion, real media import,
-native still grab, render + loudness gate, and all negative checks).
-`client.fallbacks` stayed empty throughout.
+**Live verification (2026-10-05):** Full live test battery run against
+DaVinci Resolve Studio 21.1.1.10 and community MCP server v4.8.28:
+- `validate_client.py` (headless): **ALL 17 CHECKS PASSED** (project loading,
+  batch renaming, LUT roundtrips, real media import, native still grab, render
+  with loudness gate at -14.04 LUFS, and all negative assertions).
+  `client.fallbacks` stayed empty throughout.
+- `bench_01_simple.py`: 10 reps across 4 read operations on both backends.
+  Community compound v4.8.28: ~5.9ms median. Native: ~66-67ms median.
+  0 errors across all calls.
+- `bench_02_batch_rename.py`: 8-clip batch rename. Native completed in 1 round
+  trip (75.7ms median) vs community compound's 9 round trips (161.8ms median).
+  Restored cleanly to "Solid Color".
+- `grain_timeline_toggle.py`: run against real project `test1` / `Timeline 1`.
+  Node 1 ("OFX: Film Grain") toggled on/off via `Timeline.GetNodeGraph()`;
+  rendered frames pixel-diffed with numpy. **Grain delta confirmed: 3,223 px
+  changed, max_diff 1** (reproducing exact historical baseline). Restored
+  frame confirmed pixel-exact (0 px changed).
+- `bench_03_subtitles.py`: synthetic speech generated with `espeak-ng`,
+  imported via `MediaStorage.AddItemListToMediaPool` into `bench_tl_subs`,
+  transcribed via `Timeline.CreateSubtitlesFromAudio` in 564.6ms. **PASS (9
+  subtitle items generated and validated)**.
 
 **Tooling note:** `python3-pytest` 8.3.5 and `python3-pytest-venv` 0.3
 were installed system-wide via apt on 2026-10-04. The vendor venv has

@@ -1996,9 +1996,12 @@ install conflicts, and a check was added to `install_resolve.sh` to guard agains
 **Verification**:
 - `post_update_driver_check.sh`: all checks passed (Kernel 6.12.111, NVIDIA 595.71.05-1 DKMS installed, all 4 patches applied).
 - `validate_client.py`: live validation against headless Resolve 21.1.1 passed 100% of checks (project loading, clip renaming, LUT roundtrips, real media imports, still captures, render & loudness gate, and negative assertions). `client.fallbacks` stayed empty throughout.
+- Benchmark suite (`bench_01_simple.py`, `bench_02_batch_rename.py`): verified across native and community backends.
+- Visual grading & pixel-diff verification (`grain_timeline_toggle.py`): run against real project `test1`, confirming node graph toggling and pixel-exact restore (3,223 px changed on, 0 px on restore).
+- Neural speech-to-subtitles (`bench_03_subtitles.py`): verified live (`CreateSubtitlesFromAudio`, 9 items, 564.6ms).
+- Export presets (`render_benchmark.py --list-presets`): all 31 delivery presets listed and operational.
 
 ## Why this matters (context, not a how-to)
-
 
 Resolve was already validated working on the user's main system. This separate rig
 re-validates it specifically on the patched NVIDIA 595-open driver used for an unrelated
