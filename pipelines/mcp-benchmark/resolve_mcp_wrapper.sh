@@ -29,6 +29,7 @@
 # "Session update (2026-10-01): headless mode for a remote MCP caller".
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 backend="${1:?usage: $0 native|community|headless [server args...]}"
 shift
 
@@ -73,7 +74,7 @@ case "${backend}" in
         cd "${repo}"
         # via the shim, not resolve_headless.py directly: upstream prints its
         # status lines to stdout, which corrupts the MCP stdio stream.
-        exec "${repo}/venv/bin/python" "$(dirname "${BASH_SOURCE[0]}")/resolve_headless_stdio.py" \
+        exec "${repo}/venv/bin/python" "${script_dir}/resolve_headless_stdio.py" \
             "${repo}" -- "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
         ;;
     *)
