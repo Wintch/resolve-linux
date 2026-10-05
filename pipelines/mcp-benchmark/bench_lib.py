@@ -68,11 +68,25 @@ def _find_xauthority():
     return fallback if os.path.isfile(fallback) else None
 
 
+def _find_display(xauthority):
+    """Rootless Xwayland takes a new display number per login (:0, :1, ...).
+    Take it from the Xwayland process that owns this cookie, same as
+    resolve_mcp_wrapper.sh; a hardcoded :0 pairs the right cookie with the
+    wrong server ("Invalid MIT-MAGIC-COOKIE-1 key")."""
+    if not xauthority:
+        return None
+    import re
+    import subprocess
+    out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
+    m = re.search(rf"Xwayland (:\d+) .*-auth {re.escape(xauthority)}\b", out)
+    return m.group(1) if m else None
+
+
 def resolve_env() -> dict:
     env = dict(os.environ)
-    if not env.get("DISPLAY"):
-        env["DISPLAY"] = ":0"
     xauthority = _find_xauthority()
+    if not env.get("DISPLAY"):
+        env["DISPLAY"] = _find_display(xauthority) or ":0"
     if xauthority:
         env["XAUTHORITY"] = xauthority
     else:

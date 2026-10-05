@@ -2020,6 +2020,19 @@ Cold start flaked once with `Connection closed` on `initialize` and not on 3 lat
 The only headless restriction that stands is the one already documented: no MCP render queue
 (render with ffmpeg); timeline edits and transforms work.
 
+### Hermes "external scripting is disabled" (2026-10-05) was a wrong diagnosis
+
+Hermes reported it could not reach Resolve and told the operator to set Preferences > General >
+External scripting = Local. That preference was fine (the same day's probes connected through it).
+Real cause: the login session had moved back to **Wayland** at 19:01, rootless Xwayland came up
+as `:1`, and the wrapper's hardcoded `DISPLAY=:0` paired the new cookie with the wrong server
+(`Invalid MIT-MAGIC-COOKIE-1 key`, Resolve exits in Qt init, `[resolve] <defunct>`, the MCP
+client just times out). Fix: `resolve_mcp_wrapper.sh` and `bench_lib.resolve_env()` now take
+`DISPLAY` from the Xwayland process that owns the discovered cookie (`:0` only as last resort).
+Symptom to recognise: Resolve "not scriptable" + that cookie line in `ResolveDebug.txt` =
+display/cookie mismatch, not a preference. Note the session is Wayland again, so the
+GPUDetect/H.264 caveat under "Codec support on Linux" applies once more.
+
 ## Session update (2026-10-05): Resolve Studio 21.1.1 upgrade & community MCP v4.8.28 bump
 
 Upgraded Resolve Studio from 21.1.0 (`21.1-mrd1.10.1`) to **21.1.1** (`21.1.1-mrd1.10.1`,

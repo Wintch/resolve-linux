@@ -33,7 +33,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 backend="${1:?usage: $0 native|community|headless [server args...]}"
 shift
 
-export DISPLAY="${DISPLAY:-:0}"
+# DISPLAY: a rootless Xwayland picks its number per login (:0, :1, ...), so a
+# hardcoded :0 pairs the right cookie with the wrong server ("Invalid
+# MIT-MAGIC-COOKIE-1 key", Resolve dies in Qt init). Resolved below from the
+# Xwayland process that owns the cookie; :0 only as a last resort.
 if [[ -z "${XAUTHORITY:-}" || ! -f "${XAUTHORITY}" ]]; then
     unset XAUTHORITY
     runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -54,6 +57,13 @@ if [[ -z "${XAUTHORITY:-}" || ! -f "${XAUTHORITY}" ]]; then
     elif [[ -f "${HOME}/.Xauthority" ]]; then
         export XAUTHORITY="${HOME}/.Xauthority"
     fi
+fi
+
+if [[ -z "${DISPLAY:-}" ]]; then
+    if [[ -n "${XAUTHORITY:-}" ]]; then
+        DISPLAY="$(ps -eo args | sed -n "s|^[^ ]*Xwayland \(:[0-9]*\) .*-auth ${XAUTHORITY} .*|\1|p" | head -n 1)"
+    fi
+    export DISPLAY="${DISPLAY:-:0}"
 fi
 
 export RESOLVE_SCRIPT_API="/opt/resolve/Developer/Scripting"
