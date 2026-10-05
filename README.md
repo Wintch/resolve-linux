@@ -1981,7 +1981,24 @@ Hermes-side config (the operator's `bridgeai`/`HERMES_ARCHITECTURE.md` project, 
 repo): `hermes mcp add davinci-resolve --command ssh --args iashur
 /home/iam/Documents/resolve-linux/pipelines/mcp-benchmark/resolve_mcp_wrapper.sh headless`.
 
+## Session update (2026-10-05): Resolve Studio 21.1.1 upgrade & community MCP v4.8.28 bump
+
+Upgraded Resolve Studio from 21.1.0 (`21.1-mrd1.10.1`) to **21.1.1** (`21.1.1-mrd1.10.1`,
+binary `21.1.1.0010`) using `pipelines/resolve-update/install_resolve.sh` with MakeResolveDeb
+1.10.1. Stale `.deb` files from previous builds were quarantined to prevent multi-version
+install conflicts, and a check was added to `install_resolve.sh` to guard against this.
+
+**Vendored community MCP server (`samuelgursky/davinci-resolve-mcp`)**:
+- Bumped upstream to **v4.8.28** (covering v4.8.27 Linux temp-path check and v4.8.28 ffmpeg stdin hang fixes).
+- Re-adapted `app_control-headless-restart.patch` to preserve both the headless `-nogui` flag and upstream's new `stdin=subprocess.DEVNULL` parameter.
+- Offline unit tests passed (3997 tests, 0 failures, 18 skipped).
+
+**Verification**:
+- `post_update_driver_check.sh`: all checks passed (Kernel 6.12.111, NVIDIA 595.71.05-1 DKMS installed, all 4 patches applied).
+- `validate_client.py`: live validation against headless Resolve 21.1.1 passed 100% of checks (project loading, clip renaming, LUT roundtrips, real media imports, still captures, render & loudness gate, and negative assertions). `client.fallbacks` stayed empty throughout.
+
 ## Why this matters (context, not a how-to)
+
 
 Resolve was already validated working on the user's main system. This separate rig
 re-validates it specifically on the patched NVIDIA 595-open driver used for an unrelated

@@ -55,6 +55,14 @@ echo "== Preparing build dir on /mnt/resolve_test (spacious, not the tight root 
 mkdir -p "$BUILD_ROOT"
 
 echo
+# A leftover .deb from an earlier build would be picked up by the find below and handed
+# to apt together with the new ones (two versions of the same package). Seen 2026-10-04.
+if find "$BUILD_ROOT" -maxdepth 1 -iname "davinci-resolve-studio*.deb" | grep -q .; then
+    echo "Stale davinci-resolve-studio*.deb already in $BUILD_ROOT -- move them out first" >&2
+    echo "(e.g. into $BUILD_ROOT/stale-debs/), they would be installed with the new build." >&2
+    exit 1
+fi
+
 echo "== Moving the .run into the build dir (makeresolvedeb requires a bare filename in its CWD) =="
 mv -v "$RUN_FILE" "$BUILD_ROOT/"
 RUN_BASENAME="$(basename "$RUN_FILE")"

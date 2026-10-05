@@ -456,3 +456,41 @@ evaluated here):**
   (88 tools, Resolve 21), `hoyt-harness/davinci-mcp-professional`
   (token-efficient), `lordhoell/davinci-resolve-mcp` (440+ tools, Resolve
   20), `apvlv/davinci-resolve-mcp`, `Iamkewl/Davinci-MCP`.
+
+
+## Update (2026-10-04): community server bumped to v4.8.28, headless patch re-adapted — live validation pending
+
+`git fetch` showed 4 commits past v4.8.26 (v4.8.27: Linux temp-path check
+compares by path segment; v4.8.28: ffmpeg stdin hang and
+cancel-then-respond crash). Unlike the v4.8.26 bump, **this time the
+headless patch did not apply**: v4.8.28 added `stdin=subprocess.DEVNULL` to
+the same `Popen` call in `restart_resolve_app` that the patch edits
+(`git apply --check` failed at `src/utils/app_control.py:260`).
+
+**What was done:** pre-update HEAD kept as branch `backup/pre-v4.8.28`;
+`package.json` `allowScripts` tweak stashed and popped back (merged
+cleanly); `main` reset to `origin/main` (v4.8.28); the patch was
+re-applied **by hand**, keeping both changes:
+`subprocess.Popen([resolve_path, '-nogui'], stdin=subprocess.DEVNULL)` on
+the Linux branch. Re-committed locally and
+[`patches/app_control-headless-restart.patch`](patches/app_control-headless-restart.patch)
+regenerated from that commit (it now applies on v4.8.28, not on v4.8.26 —
+an older checkout needs the old patch from git history).
+
+**Verified:**
+- `npm install` OK, `npm run smoke` reports 4.8.28.
+- Vendor offline suite via `python -m unittest discover -s tests -t .`
+  (the vendor venv has no pytest; that is how it was run before):
+  **3997 tests, OK, 18 skipped, 0 failures**. The 2 `test_platform_paths.py`
+  failures seen on v4.8.22 and v4.8.26 did not reproduce; still unexplained
+  (upstream fix or environment-dependent).
+
+**Live verification (2026-10-05):** `validate_client.py` run against
+live DaVinci Resolve Studio 21.1.1.10 (headless): **ALL CHECKS PASSED**
+(project loading, batch renaming, LUT generation/deletion, real media import,
+native still grab, render + loudness gate, and all negative checks).
+`client.fallbacks` stayed empty throughout.
+
+**Tooling note:** `python3-pytest` 8.3.5 and `python3-pytest-venv` 0.3
+were installed system-wide via apt on 2026-10-04. The vendor venv has
+`include-system-site-packages = false`, so it does not see them.

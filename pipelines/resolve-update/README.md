@@ -172,3 +172,43 @@ cd pipelines/resolve-update
   session) is `reverb-g2`'s own territory, not duplicated here — `post_update_driver_check.sh`
   only covers the driver/kernel/DKMS layer both projects share. Run `reverb-g2`'s own
   `post-update-verify.sh` too before a VR session, not just this pipeline's check.
+
+## Status log
+
+### 2026-10-04 — Resolve 21.1.1 staged, install NOT run yet
+
+Installed now: `21.1-mrd1.10.1` (Resolve 21.1.0.17). Target: **21.1.1**
+(zip downloaded manually; `unzip -t` clean).
+
+- Rollback bundle for the current build already exists:
+  `/mnt/resolve_test/resolve-update-rollback/20261004-192249/` (the two
+  `21.1-mrd1.10.1` `.deb`s + config snapshot). `preflight_backup.sh` does
+  not need to be re-run.
+- Zip moved off the root LV (95% used, 11G free at the time) to
+  `/mnt/resolve_test/resolve-update-staging/` and extracted there; the
+  `.run` is `DaVinci_Resolve_Studio_21.1.1_Linux.run` (11.2GB). Root went to
+  21G free after the move.
+- `makeresolvedeb` 1.10.1 is still the latest (2026-09-10). Its page does
+  not mention 21.1.1 specifically; it claims to handle all releases up to
+  its date. Untested against 21.1.1 on this rig.
+- **Trap found:** `install_resolve.sh` installs every
+  `davinci-resolve-studio*.deb` at the top level of the build dir, and the
+  21.1 `.deb`s from 2026-09-11 were still there. Left alone, `apt install`
+  would be handed two versions of the same package. They were moved to
+  `/mnt/resolve_test/resolve-update-build/stale-21.1-debs/` and the script
+  now refuses to run if any `.deb` is already present in the build dir.
+  The old 21.1 `.run` (11GB) is still in the build dir; the script does not
+  touch it.
+- `sudo` still asks for a password for `iam`, so the install must be run
+  as root (`su -`).
+
+### 2026-10-05 — Resolve 21.1.1 installed and live-validated
+
+- `install_resolve.sh` run successfully with `DaVinci_Resolve_Studio_21.1.1_Linux.run`.
+- Deb packages built and installed cleanly:
+  - `davinci-resolve-studio` `21.1.1-mrd1.10.1`
+  - `davinci-resolve-studio-data` `21.1.1-mrd1.10.1`
+- Binary version verified: `DaVinci Resolve Studio Version 21.1.1.0010`.
+- `post_update_driver_check.sh`: all checks passed (Kernel 6.12.111, NVIDIA 595.71.05-1 DKMS installed, all 4 patches applied, rollback kernel readiness confirmed).
+- Live validation: `validate_client.py` against headless Resolve 21.1.1: **ALL CHECKS PASSED** (timeline editing, batch clip rename, LUT roundtrip, media import, native still grab, render + loudness gate, negative assertion checks).
+
