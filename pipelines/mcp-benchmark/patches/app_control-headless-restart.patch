@@ -1,4 +1,4 @@
-From 2374bdaa5322931f221131a310c2fe4abf97b1a1 Mon Sep 17 00:00:00 2001
+From 26b9107ce6d3e6915a530738e422da2a36e1083f Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Sun, 4 Oct 2026 19:46:53 -0300
 Subject: [PATCH] fix(app-control): restart_resolve_app relaunches headless on

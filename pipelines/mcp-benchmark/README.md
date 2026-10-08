@@ -510,3 +510,72 @@ DaVinci Resolve Studio 21.1.1.10 and community MCP server v4.8.28:
 **Tooling note:** `python3-pytest` 8.3.5 and `python3-pytest-venv` 0.3
 were installed system-wide via apt on 2026-10-04. The vendor venv has
 `include-system-site-packages = false`, so it does not see them.
+
+
+## Update (2026-10-08): community server bumped to v4.9.2, headless patch re-applied cleanly
+
+`git fetch` showed 14 commits past v4.8.28 (tags v4.8.29 – v4.9.2). Resolve
+itself: still **Studio 21.1.1.10**; the bundled `get_whats_new` reports nothing
+past it (note that changelog ships *inside* the install, so it cannot announce
+a newer release by itself).
+
+Upstream changes in the range:
+- **v4.8.29** – schemas for 16 optional granular arguments now accept `null`
+  as their defaults advertise.
+- **v4.8.30** – `conform_lint` reports every source reuse when pulls overlap.
+- **v4.9.0** – new `media_pool(action="import_bounded_media")` (import a frame
+  range of a source file as a bounded Media Pool item). Present in the 4.9.2
+  tool schema; not exercised live.
+- **v4.9.1** – refused audio Volume/Pan/EQ writes return a `known_limitation`
+  block explaining the API constraint.
+- **v4.9.2** – Windows temp-space recognition in the source-media guard
+  (irrelevant on Linux).
+
+**Patch:** unlike v4.8.28, `patches/app_control-headless-restart.patch`
+rebased onto v4.9.2 with no conflict; regenerated from the rebased commit
+(`git format-patch -1`), so it now applies on v4.9.2 and is the version to use.
+Older checkouts need the earlier copy from git history.
+
+**Verified live (Resolve 21.1.1.10):**
+- `npm run smoke` reports 4.9.2.
+- `validate_client.py`: **ALL CHECKS PASSED** (17 checks, all negatives raise).
+- Community server starts, exposes 37 tools, `project_manager.get_current` and
+  `media_pool.get_current_folder` succeed with `params: {}`.
+- Catalog re-extracted: 37 tools, **719 unique actions** (718 + `import_bounded_media`,
+  nothing removed). Raw docstring-match counts differ (724) because some actions
+  are mentioned twice in one docstring — count unique names.
+- `media_pool.import_bounded_media` **live** (fixture `MCP-Benchmark` only,
+  25 fps synthetic clip): `start_frame=10, end_frame=40` → item with
+  `Frames: 31`, `Start TC 00:00:00:10`, `End TC 00:00:01:16` — i.e. the end frame
+  is **inclusive** and the item is genuinely bounded, not the whole file. Source
+  must sit inside a registered Media Storage volume (same restriction as other
+  imports); `destination_folder` must already exist (`Master` = root). Probe
+  item removed afterwards (`delete_clips` needs the two-step `confirm_token`).
+
+**Not done / unresolved:**
+- Vendor offline suite is **not clean on 4.9.2**: in an isolated copy with a
+  fake `HOME` under `/tmp` it ends at 10 failures (4020 tests;
+  `source_media_guard`, `platform_paths`, `control_panel_auth`). v4.8.28 was
+  0 failures. Probably an artefact of running under `/tmp` (the guard treats
+  it as scratch space) but **not confirmed**; not re-run on the real `HOME`.
+
+### Incident: `~/resolve-install/` was deleted during the update
+
+Mid-update, the whole `~/resolve-install/` directory (community repo, `venv`,
+local branches `backup/pre-v4.8.26`, `backup/pre-v4.8.28`, `backup/pre-v4.9.2`)
+vanished; it was not in the Trash. **Cause (confirmed by the operator):** it
+was removed by hand while freeing disk space, not by the vendor test suite
+(which I had wrongly suspected because it was the command running at the time).
+
+Recovered by re-cloning tag `v4.9.2`, `git am` of the patch above,
+`python3 -m venv venv` + `pip install -r requirements.txt` + `numpy requests`
+(the old venv had them; they are not in `requirements.txt` and the suite fails
+to import 5 modules without them), `npm install`. Lost and not restored:
+the three backup branches (reproducible from upstream tags + patch history),
+the `package.json` `allowScripts` tweak and the `+x` bit on
+`scripts/resolve_headless.py` (cosmetic).
+
+**Lesson:** everything under `~/resolve-install/` is live state that
+`.mcp.json` -> `resolve_mcp_wrapper.sh` depends on (`RESOLVE_MCP_COMMUNITY_REPO`
+defaults there); it is not cache. The patch in `patches/` is the only copy of
+the local change, which is why it is kept in this repo.
