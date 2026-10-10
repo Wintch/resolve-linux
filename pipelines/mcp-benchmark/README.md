@@ -531,6 +531,10 @@ Upstream changes in the range:
 - **v4.9.2** – Windows temp-space recognition in the source-media guard
   (irrelevant on Linux).
 
+**Setup note:** a freshly built venv for the community server also needs
+`numpy requests` beyond `requirements.txt` (the vendor suite fails to import 5
+modules without them).
+
 **Patch:** unlike v4.8.28, `patches/app_control-headless-restart.patch`
 rebased onto v4.9.2 with no conflict; regenerated from the rebased commit
 (`git format-patch -1`), so it now applies on v4.9.2 and is the version to use.
@@ -558,24 +562,3 @@ Older checkouts need the earlier copy from git history.
   `source_media_guard`, `platform_paths`, `control_panel_auth`). v4.8.28 was
   0 failures. Probably an artefact of running under `/tmp` (the guard treats
   it as scratch space) but **not confirmed**; not re-run on the real `HOME`.
-
-### Incident: `~/resolve-install/` was deleted during the update
-
-Mid-update, the whole `~/resolve-install/` directory (community repo, `venv`,
-local branches `backup/pre-v4.8.26`, `backup/pre-v4.8.28`, `backup/pre-v4.9.2`)
-vanished; it was not in the Trash. **Cause (confirmed by the operator):** it
-was removed by hand while freeing disk space, not by the vendor test suite
-(which I had wrongly suspected because it was the command running at the time).
-
-Recovered by re-cloning tag `v4.9.2`, `git am` of the patch above,
-`python3 -m venv venv` + `pip install -r requirements.txt` + `numpy requests`
-(the old venv had them; they are not in `requirements.txt` and the suite fails
-to import 5 modules without them), `npm install`. Lost and not restored:
-the three backup branches (reproducible from upstream tags + patch history),
-the `package.json` `allowScripts` tweak and the `+x` bit on
-`scripts/resolve_headless.py` (cosmetic).
-
-**Lesson:** everything under `~/resolve-install/` is live state that
-`.mcp.json` -> `resolve_mcp_wrapper.sh` depends on (`RESOLVE_MCP_COMMUNITY_REPO`
-defaults there); it is not cache. The patch in `patches/` is the only copy of
-the local change, which is why it is kept in this repo.
