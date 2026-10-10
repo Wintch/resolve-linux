@@ -38,6 +38,9 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   AI-driven control of Resolve via its scripting API (37 tools, 718 actions as of the
   latest refresh); live probes and workflow tests against it live in
   [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
+- **[SCRIPTING-API-21.md](SCRIPTING-API-21.md)**: which of the Resolve 21.x Scripting API
+  additions (IntelliSearch, Slate, Speech Generator, motion deblur, selection getters…)
+  were exercised live on this rig, what worked, and what hung or stayed inconclusive.
 - **[AI-VFX-RESEARCH.md](AI-VFX-RESEARCH.md)**: research log of AI/ML tools and
   techniques relevant to the post-production workflow on this rig — vetted community
   findings (Reddit/HuggingFace/docs) on open-weight models, local VFX pipelines, and
