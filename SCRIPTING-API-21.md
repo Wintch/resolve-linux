@@ -31,10 +31,10 @@ GPU was starved (see "Root cause of the import failures").
 | `Timeline.GetSelectedClips()` | 21.0.4 | Works. `[]` with nothing selected. Not tested with a real selection. |
 | `MediaPoolItem.PerformAudioClassification()` / `ClearAudioClassification()` | 21.0 | Work. `True`; classify took 0.4 s on a 6 s clip. |
 | `Project.ResetIntellisearchAnalysis()` | 21.0 | Works. `True`. |
-| `Project.GenerateSpeech({...})` | 21.0 | **Corrected 2026-10-11: does not produce audio.** It created `zz_speech_test-Female 1-G1-001.wav` in the media pool, but the file is 1080 bytes (a WAV header, no samples; `ffprobe` duration N/A, Resolve shows duration 00:00:00:00). Earlier "Works" only meant the call returned success and a clip appeared. Cause not found (Extra missing, VRAM, or model). Used `TextInput`, `VoiceModel: "Female 1"`, `Filename`. |
+| `Project.GenerateSpeech({...})` | 21.0 | **Works** (re-tested 2026-10-11 after a clean Resolve relaunch): `{TextInput, VoiceModel: "Female 1", Filename}` produced a 2.8 s, 48 kHz mono WAV (538 KB) that `TranscribeAudio` read back as exactly the input text. The returned object is a MediaPoolItem, so do not put it in `result` (unserializable). **The first run on 2026-10-10 produced a 1080-byte header-only WAV** (no samples), so the earlier "Works" was wrong at that time; cause unknown, same class of unexplained failure as the transcription `False` returns below. During the 2026-10-11 run the log showed transient `cudaMalloc failed` / TRT out-of-memory errors (8 GB GPU, 10 MiB free) and the audio was still generated. |
 | `Resolve.DisableBackgroundTasksForCurrentResolveSession()` | 21.0 | Works. Returns `None`, no error. |
-| `MediaPoolItem.AnalyzeForSlate(color)` / `Folder.AnalyzeForSlate(color)` | 21.0 | **Inconclusive.** No job starts (status stays `Inactive`). Returned `None` on the synthetic clip and `False` on a real clip (`"Blue"`, `"Red"`, `"Green"`, `"Yellow"`). The docs say it requires the *AI Slate ID* Extra; whether it is installed was not checked. |
-| `MediaPoolItem.RemoveMotionBlur(opts)` / `Folder.RemoveMotionBlur()` | 21.0 | **Inconclusive.** Returns `None` immediately, no clip created, with `{}`, ProRes422 and H264 options, on both clips (also after freeing the GPU). |
+| `MediaPoolItem.AnalyzeForSlate(color)` / `Folder.AnalyzeForSlate(color)` | 21.0 | **Works, if you pass the constant, not a string.** `AnalyzeForSlate("Blue")` returns `False`; `AnalyzeForSlate(resolve.MARKER_BLUE)` (a float, `1.0`) returns `True`, status goes `Initializing` -> `Complete`. On the room footage (no slate) it finished with no markers and no metadata, which is the correct result. `dir(resolve)` does not list `MARKER_*`, but `getattr(resolve, "MARKER_BLUE")` resolves. The earlier "inconclusive" (10-10) was the string argument. A positive case (a real slate) was not tested. |
+| `MediaPoolItem.RemoveMotionBlur(opts)` / `Folder.RemoveMotionBlur()` | 21.0 | **Still unresolved.** Returns `None` immediately and creates no clip, with `{}`, ProRes422/mov and H264/mp4 options (and the full `DeblurOptions` set), on both clips, also in a **freshly relaunched Resolve with the GPU free** (1.8 GB used). Nothing relevant in `ResolveDebug.txt` in that case. In a long session after speech generation, transcription and slate analysis, the same call coincided with `TRT ERROR ... OutOfMemory (Requested size was 311259140 bytes)` and a stack trace: the 8 GB GPU was full. So VRAM exhaustion is a second, separate way to fail; it is not the whole story. Which of the 9 Extras packages (if any) provides Motion Deblur could not be read from disk. |
 | `MediaPoolItem.AnalyzeForIntellisearch(False, False)` | 21.0 | **Hangs Resolve.** Opens a modal "Analyze for IntelliSearch / Media Indexing - Initializing…" dialog that blocks the scripting thread. GPU stayed at 0 % for minutes; every later `run_script` timed out. `xdotool` (click on Cancel, Escape) could not close the dialog; the user dealt with it by hand and Resolve was found closed afterwards. **That run happened while the GPU was starved (see below) and before checking the Extras**, so the cause (VRAM, a missing *AI IntelliSearch* Extra, or the synthetic clip) is unknown, and the call has **not been retried**. |
 
 ## 21.1 / 21.1.1 additions (tested 2026-10-11)
@@ -107,18 +107,17 @@ and silent clips first. So none of these is a confirmed cause: `DisableBackgroun
 quick export and prior failed calls were each ruled out or inconclusive, and the RAM
 (32 GB now, 15 GB when it passed in September) and VRAM were not the factor either.
 If it recurs, try: relaunch Resolve, and check the status `Error` text before anything else.
-Other 21.0 AI calls that "did nothing" on 2026-10-10 (`AnalyzeForSlate`, `RemoveMotionBlur`)
-were probably run in a similarly affected instance and are worth re-testing after a clean
-relaunch.
+Re-tested after a clean relaunch: `GenerateSpeech` and `AnalyzeForSlate` turned out to work
+(see their rows); `RemoveMotionBlur` still returns `None`.
 
 Side finding: `~/.local/share/DaVinciResolve/logs/mcp.log` was 552 MB. It logs every
 tool call in full, including large doc payloads.
 
 ## Things that differ from the stubs
 
-- The stub types `markerColor` as "one of the `resolve.*` constants: `MARKER_BLUE`, …",
-  but `dir(resolve)` has **no** `MARKER_*` attributes. This may be why
-  `AnalyzeForSlate` does nothing; not confirmed.
+- The stub types `markerColor` as "one of the `resolve.*` constants: `MARKER_BLUE`, …" (a float).
+  `dir(resolve)` has **no** `MARKER_*` attributes, but `getattr(resolve, "MARKER_BLUE")` works.
+  Passing the colour name as a string makes `AnalyzeForSlate` return `False`.
 - `MediaPool.GetSelectedClips()` / `Timeline.GetSelectedClips()` return Resolve objects;
   returning them directly from `run_script` makes the result unserializable
   (`'NoneType' object has no attribute '__name__'`). Map to `GetName()` first.
@@ -153,7 +152,7 @@ The `llm` container has restart policy `unless-stopped`: it stays stopped until
 - `AnalyzeForIntellisearch(identifyFaces, isBetterMode)`: *AI IntelliSearch - Faster*
   (`isBetterMode=False`) or *- Better* (`True`).
 - `AnalyzeForSlate(markerColor)`: *AI Slate ID*.
-- `GenerateSpeech(...)`: *AI Speech Generator* (worked here, so it is installed).
+- `GenerateSpeech(...)`: *AI Speech Generator* (produced audio on 2026-10-11, so it is installed).
 
 The Extras live in `/opt/resolve/Extras/<hash>/` (9 packages, 19 MB to 6.8 GB); their
 manifests are binary and the directory names are hashes, so which package is which could
@@ -161,8 +160,10 @@ not be read from disk. Check in Resolve: Extras Download Manager.
 
 ## To finish
 
-1. Check the Extras Download Manager for *AI Slate ID* and *AI IntelliSearch*; install
-   what is missing, then re-run `AnalyzeForSlate` and `AnalyzeForIntellisearch`
-   (the latter last, since it hung Resolve once; that run was under VRAM starvation).
-2. Find out what `RemoveMotionBlur` needs (it returns `None` with no message).
-3. Test `Timeline.GetSelectedClips()` with an actual selection.
+1. `RemoveMotionBlur`: find out what it needs. Check the Extras Download Manager in the GUI for
+   an AI Motion Deblur package, and try the same operation from the GUI to see its own error.
+2. `AnalyzeForIntellisearch`: check the *AI IntelliSearch* Extra first, then run it last in a
+   fresh Resolve with the GPU free (it hung Resolve once, under VRAM starvation); not retried.
+3. `AnalyzeForSlate` with a real slate clip, to see markers and metadata populated.
+4. Test `Timeline.GetSelectedClips()` with an actual selection.
+5. Not run: `ApplyGradeFromDRX`, `SmartReframe`, multicam APIs, `AutoAlignClips`, `SetAudioMapping`.
