@@ -562,3 +562,58 @@ Older checkouts need the earlier copy from git history.
   `source_media_guard`, `platform_paths`, `control_panel_auth`). v4.8.28 was
   0 failures. Probably an artefact of running under `/tmp` (the guard treats
   it as scratch space) but **not confirmed**; not re-run on the real `HOME`.
+
+
+## Update (2026-10-16): upstream is at v4.13.2 (not adopted on the live install yet)
+
+Resolve itself: still **Studio 21.1.1**; `get_whats_new` reports nothing newer.
+Upstream moved 66 commits past v4.9.2 (tags v4.9.3 – v4.13.2, 15 releases in
+8 days). The vendored install at `~/resolve-install/davinci-resolve-mcp` is
+**still on v4.9.2** (+ the local headless commit); this pass only read the
+release notes and re-extracted the catalog from an isolated `git worktree`
+(removed afterwards), using the install's venv.
+
+Changes that matter on this rig (Linux, Studio 21.1.1):
+- **v4.12.0** – new `timeline_ai(action="list_title_presets")` and
+  `set_subtitle_preset` (apply an installed subtitle preset to a subtitle
+  track; writes a *new timeline revision* and restores the original on
+  failure). Upstream evidence is a contributor's synthetic run on Studio
+  21.1.0.17 / Windows; the maintainer did not re-measure it. **Not probed here.**
+  Also `timeline.set_title_text`/`get_title_text` now reach sText, Text3D and
+  MultiText, not only TextPlus.
+- **v4.13.0** – `resolve_control set_high_priority` takes `high` (default
+  `true`); on 21.1+ it calls `SetHighPriority(bool)` and is reversible, whereas
+  the old no-argument call returns `False` on 21.1 and does nothing. Render
+  settings accept `AudioFormat` and `UseUniqueFilenames`. Two API-truth entries,
+  both *reported* on 21.1.0.14 / macOS and not reproduced upstream:
+  `Project.StartRendering` is state-dependent (can return `False` and leave the
+  job Ready; check job status, nothing retries), and **project-settings presets
+  mutated before a project's first `SaveProject` destroy the project** (every
+  call returns `True`, reload then fails). Save once before any preset write.
+- **v4.10.0** – subtitle caption editing through `project_db` (edits
+  `Project.db` directly; needs Resolve fully quit). It is not in the Python
+  tool catalog, so it does not change the action count.
+- **v4.10.x / v4.11.x fixes** – `rename_plan` collision detection (case/Unicode,
+  names that stay in place), `drt assemble_project` XML-escaping and bin
+  registry, `retargetDRT/DRP` `<ProjectVersion>`, `.cube` `LUT_3D_INPUT_RANGE`
+  parsing, `import_timeline_checked` reading `"false"` as true, `PATH` ordering
+  that could shadow the venv's `whisper`/`ffmpeg`. v4.9.3 notes a known gap:
+  bins assembled for 19.x are not registered.
+- **v4.10.2** – `place_fusion_title` documented as inert on Studio 21.0.4.5 and
+  free 21.1.0.
+- **v4.10.4, v4.13.1, v4.13.2** – OSS-Scanner threat model, Windows pid-liveness
+  and test portability. No Linux effect.
+
+**Catalog:** 37 tools, **+2 actions** over v4.9.2 (719 → 721), nothing removed.
+My extraction parser this time counted 721 for v4.9.2 and 723 for v4.13.2;
+the 2-action delta is the reliable figure, the absolute number depends on the
+parser (as the 2026-10-08 note about raw docstring counts already warned).
+
+**Patch:** `patches/app_control-headless-restart.patch` passes
+`git apply --check` on v4.13.2 and applied cleanly in the worktree. File
+unchanged.
+
+**Not done:** no `git pull` on the live install, no `validate_client.py` or
+`npm run smoke` against 4.13.2, no live probe of the two new actions, offline
+suite not run. Upstream reports 4111 tests passing on macOS for v4.13.2, which
+is their number, not ours.
