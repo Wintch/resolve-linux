@@ -641,6 +641,30 @@ unchanged.
   timeline (the `get_item_list_in_track` action I tried does not exist in the
   timeline tool). The two leftover timelines were left in the fixture project.
 
+**Visual check attempt (same day) — inconclusive, preset NOT visually confirmed.**
+- The new timeline has **12** subtitle items on 1 track (the 9 in my earlier
+  note came from an older bench_03 run; I did not compare against the original).
+- `project.ExportCurrentFrameAsStill` at 01:00:01:01 gave an all-black 1920x1080
+  PNG. The timeline had **no video item**, so black is expected there, and the
+  still API may not include subtitles anyway.
+- A render job cannot even be added on a timeline with no video clip
+  (`AddRenderJob` returns `''`, with or without the subtitle burn-in settings).
+  I appended a 100-frame `validate_client_testsrc_av.mov` to video track 1 of
+  the throwaway copy `bench_tl_subs_preset_test` (original untouched) and
+  rendered frame 86425 as PNG with `ExportSubtitle=True, SubtitleFormat=BurnIn`.
+- That job reported **Failed**: *"The Fusion composition at 01:00:01:01 could
+  not be processed successfully."* A PNG was still written and it is **entirely
+  black**, i.e. neither the test clip nor any subtitle rendered. So on this rig
+  the Word Highlight comp did not render at all.
+- Possible cause, **not confirmed**: GPU memory. At that moment the card had
+  6.5 of 8 GB used, ~5 GB by python processes of the tts-hq / stt / upscaler
+  containers (Resolve held ~0.8 GB); see the GPU VRAM contention note. Not
+  re-run with those containers stopped. Other possible causes are the preset
+  itself or a missing font (it asks for Segoe UI Black).
+- Side effects on the project: render format left at PNG/RGB8, one failed job
+  in the queue, a test clip on `bench_tl_subs_preset_test`, output in
+  `~/Videos/mcp-bench-scratch/subpreset/`.
+
 **Not done:** vendor offline suite not run (upstream reports 4111 passing on macOS for
 v4.13.2, their number, not ours), community server not re-launched in a
 client session after the bump.
