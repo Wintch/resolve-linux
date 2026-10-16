@@ -564,14 +564,15 @@ Older checkouts need the earlier copy from git history.
   it as scratch space) but **not confirmed**; not re-run on the real `HOME`.
 
 
-## Update (2026-10-16): upstream is at v4.13.2 (not adopted on the live install yet)
+## Update (2026-10-16): community server bumped to v4.13.2, headless patch re-applied
 
-Resolve itself: still **Studio 21.1.1**; `get_whats_new` reports nothing newer.
+Resolve itself: still **Studio 21.1.1.10**; `get_whats_new` reports nothing newer.
 Upstream moved 66 commits past v4.9.2 (tags v4.9.3 – v4.13.2, 15 releases in
-8 days). The vendored install at `~/resolve-install/davinci-resolve-mcp` is
-**still on v4.9.2** (+ the local headless commit); this pass only read the
-release notes and re-extracted the catalog from an isolated `git worktree`
-(removed afterwards), using the install's venv.
+8 days). The catalog was first re-extracted from an isolated `git worktree`,
+then the live install `~/resolve-install/davinci-resolve-mcp` was moved to
+v4.13.2: branch `v4.13.2-headless` = tag v4.13.2 + the headless commit
+cherry-picked (clean, no conflict). The previous state is kept as branch
+`backup-v4.9.2-headless`; `main` there was not rewritten.
 
 Changes that matter on this rig (Linux, Studio 21.1.1):
 - **v4.12.0** – new `timeline_ai(action="list_title_presets")` and
@@ -613,7 +614,13 @@ parser (as the 2026-10-08 note about raw docstring counts already warned).
 `git apply --check` on v4.13.2 and applied cleanly in the worktree. File
 unchanged.
 
-**Not done:** no `git pull` on the live install, no `validate_client.py` or
-`npm run smoke` against 4.13.2, no live probe of the two new actions, offline
-suite not run. Upstream reports 4111 tests passing on macOS for v4.13.2, which
-is their number, not ours.
+**Verified live (Resolve 21.1.1.10):**
+- `npm run smoke` reports 4.13.2; `requirements.txt` unchanged since 4.9.2, the
+  existing venv (with `numpy requests`) imports fine. `package.json` changed
+  upstream but `npm ci` was **not** re-run (node_modules left as is).
+- `validate_client.py`: **ALL CHECKS PASSED** (all negatives raise).
+
+**Not done:** no live probe of `list_title_presets` / `set_subtitle_preset`,
+vendor offline suite not run (upstream reports 4111 passing on macOS for
+v4.13.2, their number, not ours), community server not re-launched in a
+client session after the bump, `npm ci` skipped.
