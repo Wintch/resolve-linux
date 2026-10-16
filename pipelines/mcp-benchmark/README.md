@@ -627,8 +627,20 @@ unchanged.
   reports on Windows. It is an inventory only; it says nothing about whether a
   preset applies live.
 
-**Not done:** no live probe of `set_subtitle_preset` (writes a new timeline
-revision, so needs a fixture timeline),
-vendor offline suite not run (upstream reports 4111 passing on macOS for
+- `timeline_ai(action="set_subtitle_preset")` **live** on the `MCP-Benchmark`
+  fixture only, timeline `bench_tl_subs` (the 9 AI subtitles from
+  `bench_03_subtitles.py`), `preset="Word Highlight"`: `dry_run=true` returned
+  the patch and executed nothing; the real call took 2.5 s, created
+  `bench_tl_subs_preset_test` (the "new revision"), kept the original
+  `bench_tl_subs` and archived `bench_tl_subs_archived_v01`. The new timeline
+  has 1 subtitle track. Upstream's own report says what was and was not
+  verified: track counts, item names/bounds, media ids and preset controls via
+  re-export readback; markers, grades, other Fusion comps and audio **not**
+  verified, and `render_verified: false`. I did not render the result or check
+  the burn-in visually, and did not count the subtitle items in the new
+  timeline (the `get_item_list_in_track` action I tried does not exist in the
+  timeline tool). The two leftover timelines were left in the fixture project.
+
+**Not done:** vendor offline suite not run (upstream reports 4111 passing on macOS for
 v4.13.2, their number, not ours), community server not re-launched in a
 client session after the bump.
