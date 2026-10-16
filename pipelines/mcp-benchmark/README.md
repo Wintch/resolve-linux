@@ -619,8 +619,16 @@ unchanged.
   existing venv (with `numpy requests`) imports fine. `package.json` changed
   upstream but `npm ci` was **not** re-run (node_modules left as is).
 - `validate_client.py`: **ALL CHECKS PASSED** (all negatives raise).
+- `npm ci` re-run afterwards (clean), smoke still 4.13.2.
+- `timeline_ai(action="list_title_presets")` called in-process against the
+  4.13.2 code (read-only inventory of `/opt/resolve/Fusion/Templates/Templates.drfx`):
+  **134 presets** (111 titles, 18 subtitle, 5 animated subtitle), i.e. 23
+  subtitle presets and 134 total, the same figures the upstream contributor
+  reports on Windows. It is an inventory only; it says nothing about whether a
+  preset applies live.
 
-**Not done:** no live probe of `list_title_presets` / `set_subtitle_preset`,
+**Not done:** no live probe of `set_subtitle_preset` (writes a new timeline
+revision, so needs a fixture timeline),
 vendor offline suite not run (upstream reports 4111 passing on macOS for
 v4.13.2, their number, not ours), community server not re-launched in a
-client session after the bump, `npm ci` skipped.
+client session after the bump.
