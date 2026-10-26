@@ -668,3 +668,122 @@ unchanged.
 **Not done:** vendor offline suite not run (upstream reports 4111 passing on macOS for
 v4.13.2, their number, not ours), community server not re-launched in a
 client session after the bump.
+
+## Update (2026-10-26): community server bumped to v4.15.3, live re-test blocked, two alternative servers declined
+
+Resolve itself: still **Studio 21.1.1** (`21.1.1-mrd1.10.1`, binary `21.1.1.0010`);
+no newer build found anywhere public (Blackmagic's own product page still just says
+"21", and trade press tops out at the 21.1 / IBC 2026 release already covered above).
+Upstream `samuelgursky/davinci-resolve-mcp` moved **55 commits past v4.13.2** (tags
+v4.13.3 – v4.15.3, **14 releases in 10 days**).
+
+**Live install moved to v4.15.3:** same procedure as every prior bump —
+`backup-v4.13.2-headless` kept as a branch (alongside the existing
+`backup-v4.9.2-headless`), `v4.15.3-headless` = tag `v4.15.3` + the local
+`restart_resolve_app` `-nogui` commit cherry-picked. **Clean, no conflict**, same as
+the v4.13.2 rebase on 2026-10-16. `pip install -r requirements.txt --upgrade` (venv,
+all already satisfied), `npm ci` (flagged `better-sqlite3@11.10.0`'s install script for
+re-approval under npm 11's script-approval gate — approved; `require()` of both
+`better-sqlite3` and `sharp` still succeeds after). `npm run smoke` reports `4.15.3`.
+`doctor.py`: all core checks `[OK]` (checkout, entrypoint, Python 3.13.5, scripting
+API/library paths); the two pre-existing Codex/Claude-Desktop config `[WARN]`s are
+unchanged client-wiring notes, not server problems.
+
+**Catalog:** tool count unchanged at **37** (`mcp.list_tools()` run in-process against
+the new code, no live Resolve needed — same method as every prior check). Two new
+actions, both from the vendor CHANGELOG, **not re-extracted with the exact docstring
+parser** used for the MCP-CAPABILITIES.md table (its action-count format varies per
+tool, as the 2026-10-08 and 2026-10-16 notes above already found; a precise-looking
+total from a different method would be worse than none):
+- **`timeline replace_source_range`** (v4.15.0) — slips a clip to a new source range
+  on an API with no native slip/trim call: append the new range on a temp track, carry
+  grades/transform/crop/composite/scaling, delete the original, re-place. HIGH risk,
+  destructive-registry gated, `dry_run` supported.
+- **`timeline_item probe_keyframe_override`** (v4.15.0) — exports a frame, nudges a
+  property, exports again, compares; null-control-gated. LOW risk.
+
+**Directly relevant to the black-frame finding two sections above:** v4.15.0 changes
+`timeline_frame`'s *default* capture route away from the render queue. `quality="frame"`
+(now also what `"preview"`/`"full"` mean) uses `Project.ExportCurrentFrameAsStill`
+instead — seek, read the playhead back by frame, export, restore — because the vendor's
+own conform session hit **`AddRenderJob` returned nothing on every call** on the render
+route while the export route worked every time (3840×2160, ~0.2s). That is the exact
+failure mode this benchmark hit on 2026-10-16 (`AddRenderJob` returning `''` on a
+timeline with no video item). `quality="render"` still exists, opt-in only now.
+**Not yet re-tested here — see below.**
+
+Other v4.14–4.15 changes worth knowing about on this rig:
+- **v4.15.0**, also: keyframe actions on Resolve 19.x now return
+  `KEYFRAME_API_UNAVAILABLE` instead of crashing (`'NoneType' object is not callable`);
+  `timeline delete_clips` names locked tracks instead of answering a bare `False`; a
+  Color-page visit during playback is now refused (`PLAYBACK_ACTIVE`) instead of hanging
+  the whole scripting connection; and `SCRIPTING_UNAVAILABLE` now reads
+  `System.Scripting.Mode` from `config.dat` and leads with "Quit and relaunch DaVinci
+  Resolve" when the preference is already Local — **macOS-verified only upstream, the
+  Linux path is explicitly untested** and a wrong/unreadable path silently keeps the old
+  generic message (see the live attempts below — this is exactly the message we got).
+- **v4.14.0**: subtitle-preset install path, an earlier/narrower version of the
+  frame-capture fix above.
+- **v4.14.3**: fixed a real argument-injection vulnerability in `conform`'s
+  `relink_scalefix` (replaced a `find` subprocess with filesystem traversal).
+- **v4.15.1**: frame-capture images stopped serializing on Python 3.10 specifically
+  (FastMCP infers an output schema from a bare `-> Any` only on 3.10) — **does not
+  affect this rig**, the venv runs 3.13.5.
+- **v4.15.2 / v4.15.3**: marker-blob zstd block-size fix (blobs over 128 KiB), CI now
+  covers the Python/Node version floors, a macOS installer sandbox-path fix. No
+  Linux-relevant behavior change.
+
+**Not done — live re-test of the 2026-10-16 black-frame failure.** Three attempts to
+bring up headless Resolve against the new v4.15.3 code (`resolve_headless.py start`,
+`guard` clean each time, nothing else running):
+1. Plain SSH environment, no `DISPLAY`/`XAUTHORITY` at all → Qt
+   `createPlatformIntegration` aborts (`SIGABRT`), crash dump in `ResolveDebug.txt`.
+2. `DISPLAY`/`XAUTHORITY` resolved the same way `bench_lib.resolve_env()` does — read
+   the live Xwayland cookie from `/run/user/1000/.mutter-Xwaylandauth.*` and the display
+   number from the `Xwayland :N ... -auth <cookie>` process line, not a hardcoded `:0` —
+   the exact fix for the 2026-10-05 "wrong diagnosis" incident documented further below.
+   No crash this time, a real window opened and closed cleanly on `Quit()`, but
+   **`scriptapp()` never answered within 100s.**
+3. Same environment, 200s timeout — same result.
+
+Each attempt left a `-reportCrash ... -versionUpdate` helper process behind; cleaned up
+both times with `resolve_headless.py stop --force`. Not diagnosed further: at the time,
+the GPU had ~5.5/8GB VRAM in use by three `python3` processes (the tts-hq/stt/upscaler
+containers), the same contention already flagged — not confirmed — as a suspect in the
+2026-10-16 black-frame entry above. Stopping those containers to get a clean reading was
+not attempted; they were in active use for something else and stopping them is not this
+benchmark's call to make unilaterally. The new v4.15.0 `scripting_preference_local`
+diagnostic (above) would have said directly whether the External Scripting preference
+itself was the problem, but its Linux path is unverified upstream, and in all three
+attempts the error stayed the old generic "set External scripting = Local" message — so
+it neither confirmed nor ruled out a preference problem here.
+
+**Also found, unrelated to this version bump:** the optional AI extras (`librosa`,
+`openai-whisper`, `open_clip_torch`, `transformers`, `opencv-python`) are absent from
+this venv — `doctor.py` reports 5 of 6 missing, only `numpy` present. An earlier update
+(2026-09-07, "AI-driven control via MCP" in the main README) recorded all of these as
+installed; the reflog shows the checkout was fully re-cloned on 2026-10-04 (`clone` is
+its oldest entry), which is when the version numbering also jumped from the v2.x scheme
+to v4.x. The fresh venv from that re-clone never got the extras reinstalled. Not done
+here either — multi-GB of downloads, out of scope for a version bump — flagging it so
+nobody assumes they're still there.
+
+### Other DaVinci Resolve MCP servers — considered, declined
+
+Checked whether anything new had shown up worth switching to or adding as a third
+server, beyond the already-paused `wassermanproductions/unofficial-davinci-mcp`
+(2026-10-02 note above — that checkout no longer exists on this rig) and Blackmagic's
+own native server (main README). Pulled real repo metadata via `api.github.com`, not
+just search-result star counts someone else cached:
+
+| Repo | Created | Last push | Stars | Verdict |
+|---|---|---|---|---|
+| `samuelgursky/davinci-resolve-mcp` (in use) | 2025-03-18 | 2026-10-23 | 3,772 | Keep. |
+| `lordhoell/davinci-resolve-mcp` | 2026-04-03 | 2026-04-03 | 23 | **Declined.** One push total, the same day it was created, nothing since. The "440+ tools, full scripting API" claim in its description is unverified; the project reads as abandoned, not actively wrong. |
+| `Tooflex/davinci-resolve-mcp` | 2025-03-19 | 2026-07-25 | 21 | **Declined.** Real but small (32 tools) and three months stale against a project that ships multiple releases on some days. Pins Python 3.10/3.11 because Resolve's scripting module still imports the removed `imp`; the server already in use handles that differently and runs clean on this rig's Python 3.13.5. No capability found that the in-use server doesn't already cover. |
+
+Neither alternative was installed or run — the decision is from repo metadata
+(`created_at`/`pushed_at`/`stargazers_count`), not a feature trial. Worth a second look
+if either becomes active again, but staying maintained isn't by itself a reason to add a
+second compound server that overlaps the one already wired into Claude Code and Hermes
+everywhere on this rig.
