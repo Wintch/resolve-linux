@@ -710,7 +710,7 @@ own conform session hit **`AddRenderJob` returned nothing on every call** on the
 route while the export route worked every time (3840×2160, ~0.2s). That is the exact
 failure mode this benchmark hit on 2026-10-16 (`AddRenderJob` returning `''` on a
 timeline with no video item). `quality="render"` still exists, opt-in only now.
-**Not yet re-tested here — see below.**
+**Re-tested live — see below: the mechanical failure is fixed, confirmed on real footage.**
 
 Other v4.14–4.15 changes worth knowing about on this rig:
 - **v4.15.0**, also: keyframe actions on Resolve 19.x now return
@@ -733,40 +733,78 @@ Other v4.14–4.15 changes worth knowing about on this rig:
   covers the Python/Node version floors, a macOS installer sandbox-path fix. No
   Linux-relevant behavior change.
 
-**Not done — live re-test of the 2026-10-16 black-frame failure.** Three attempts to
-bring up headless Resolve against the new v4.15.3 code (`resolve_headless.py start`,
-`guard` clean each time, nothing else running):
-1. Plain SSH environment, no `DISPLAY`/`XAUTHORITY` at all → Qt
-   `createPlatformIntegration` aborts (`SIGABRT`), crash dump in `ResolveDebug.txt`.
-2. `DISPLAY`/`XAUTHORITY` resolved the same way `bench_lib.resolve_env()` does — read
-   the live Xwayland cookie from `/run/user/1000/.mutter-Xwaylandauth.*` and the display
-   number from the `Xwayland :N ... -auth <cookie>` process line, not a hardcoded `:0` —
-   the exact fix for the 2026-10-05 "wrong diagnosis" incident documented further below.
-   No crash this time, a real window opened and closed cleanly on `Quit()`, but
-   **`scriptapp()` never answered within 100s.**
-3. Same environment, 200s timeout — same result.
+**Live re-test of the 2026-10-16 black-frame failure — mechanical bug confirmed fixed,
+the subtitle question stays genuinely open.** Three attempts to bring up headless
+Resolve against the new v4.15.3 code via `resolve_headless.py start` (`guard` clean each
+time, nothing else running) all failed with `scriptapp()` never answering within 100–200s
+— first with a Qt `createPlatformIntegration` abort (`SIGABRT`) when `DISPLAY`/`XAUTHORITY`
+weren't set at all, then cleanly timing out twice even with both resolved the same way
+`bench_lib.resolve_env()` does (the live Xwayland cookie + its matching `:N`, not a
+hardcoded `:0` — the exact fix for the 2026-10-05 "wrong diagnosis" incident documented
+further below).
 
-Each attempt left a `-reportCrash ... -versionUpdate` helper process behind; cleaned up
-both times with `resolve_headless.py stop --force`. Not diagnosed further: at the time,
-the GPU had ~5.5/8GB VRAM in use by three `python3` processes (the tts-hq/stt/upscaler
-containers), the same contention already flagged — not confirmed — as a suspect in the
-2026-10-16 black-frame entry above. Stopping those containers to get a clean reading was
-not attempted; they were in active use for something else and stopping them is not this
-benchmark's call to make unilaterally. The new v4.15.0 `scripting_preference_local`
-diagnostic (above) would have said directly whether the External Scripting preference
-itself was the problem, but its Linux path is unverified upstream, and in all three
-attempts the error stayed the old generic "set External scripting = Local" message — so
-it neither confirmed nor ruled out a preference problem here.
+**Root cause, found after switching from the wrapper script to a direct poll:**
+`scripts/resolve_headless.py`'s own `_connect()` falls back to `DEFAULT_API`/`DEFAULT_LIB`
+when `RESOLVE_SCRIPT_API`/`RESOLVE_SCRIPT_LIB` aren't in the environment — and those
+defaults are **hardcoded macOS paths** (`/Library/Application Support/Blackmagic
+Design/...`). The normal install sets the real ones in `~/.bashrc`, which a non-interactive
+SSH command (`ssh host "cmd"`, no `-t`, no login shell) never sources. So every `start`
+attempt run that way silently tried to import `DaVinciResolveScript` from a macOS path
+that doesn't exist on this box, got `ImportError` → `None`, every single poll, for the
+whole timeout — regardless of whether Resolve itself was ready. Launching
+`/opt/resolve/bin/resolve -nogui` by hand with the three scripting env vars exported and
+polling `scriptapp()` in a loop connected **on the first poll, ~4s in**, and stayed
+connected for the next 56s of polling without incident. Not a Resolve, GPU, or v4.15.3
+problem — a portability gap in the verification script itself when driven over a
+non-login shell. **Takeaway for next time: export `RESOLVE_SCRIPT_API` /
+`RESOLVE_SCRIPT_LIB` / `PYTHONPATH` explicitly before calling `resolve_headless.py` over
+plain SSH** — don't rely on `~/.bashrc`.
 
-**Also found, unrelated to this version bump:** the optional AI extras (`librosa`,
-`openai-whisper`, `open_clip_torch`, `transformers`, `opencv-python`) are absent from
-this venv — `doctor.py` reports 5 of 6 missing, only `numpy` present. An earlier update
-(2026-09-07, "AI-driven control via MCP" in the main README) recorded all of these as
-installed; the reflog shows the checkout was fully re-cloned on 2026-10-04 (`clone` is
-its oldest entry), which is when the version numbering also jumped from the v2.x scheme
-to v4.x. The fresh venv from that re-clone never got the extras reinstalled. Not done
-here either — multi-GB of downloads, out of scope for a version bump — flagging it so
-nobody assumes they're still there.
+With that fixed, re-ran the actual 2026-10-16 case against the live, connected v4.15.3
+instance, in-process (`mcp.call_tool`, no MCP transport needed):
+- `timeline_ai(action="set_subtitle_preset", preset="Word Highlight")` on `bench_tl_subs`
+  (fixture `MCP-Benchmark`) — succeeded the same way as before: new timeline
+  `bench_tl_subs_preset_retest_v4153`, original archived (`archived_version: 2`),
+  `render_verified: false` (the tool's own honest caveat, unchanged).
+- `timeline_frame(action="capture", quality="frame")` at four different timecodes across
+  the subtitle range — **identical bytes every time** (md5-verified), still solid black.
+  The tool's own warning explains why this alone proves nothing: *"This still may not
+  include the subtitle track: `ExportCurrentFrameAsStill` follows the viewer, and whether
+  it burns subtitles in has not been measured."* This timeline still has no video track,
+  same as 2026-10-16.
+- Imported the same throwaway clip from that day (`validate_client_testsrc_av.mov`),
+  `append_to_timeline`'d it onto video track 1 — but append places new content **after**
+  everything already on the timeline, landing the clip at frames 86948–87092 while the
+  subtitles run roughly 86401–86730+. **No temporal overlap**, so no single-frame capture
+  could show both regardless of the capture route; this is a fixture-construction gap
+  from how `bench_03_subtitles.py` + a plain append interact, not a rendering bug.
+  Fixing it would need a timeline edit that places video under the existing subtitles —
+  not attempted this pass.
+- Captured a frame **inside the video clip's own range** (frame 87000) as the control:
+  **a clean, correct frame** — the full SMPTE-style color-bar test pattern, the `+` focus
+  cross, the burned-in timecode, zero corruption, zero black. No `AddRenderJob` error, no
+  retry storm, no timeout.
+
+**Verdict: the mechanical bug from 2026-10-16 is fixed** — `ExportCurrentFrameAsStill`
+captures real footage correctly where the old render-queue route failed every call. **The
+original question — does a `set_subtitle_preset` burn-in actually show up in this capture
+route — is still unanswered**, now for a fixture-construction reason rather than a
+rendering bug, and by the vendor's own admission the burn-in behavior of this capture path
+"has not been measured" even upstream.
+
+**Also found, now fixed: the optional AI extras were missing, reinstalled.** `librosa`,
+`openai-whisper`, `open_clip_torch`, `transformers`, `opencv-python` were absent from this
+venv (`doctor.py` reported 5 of 6 missing, only `numpy` present) — the 2026-09-07 update
+(main README) recorded all of these installed, but the reflog shows the checkout was fully
+re-cloned on 2026-10-04 (`clone` is its oldest entry, coinciding with the v2.x → v4.x
+version-scheme jump), and that fresh venv never got them back.
+
+Reinstalled via `venv/bin/pip install librosa opencv-python transformers open_clip_torch
+openai-whisper` (the exact packages `doctor.py` itself names) — no CUDA index pinned, pip
+resolved GPU-enabled wheels on its own: **`torch==2.14.1+cu130`**, `torch.cuda.is_available()
+== True`, device `NVIDIA GeForce RTX 3060 Ti`. `doctor.py` now reports all 6 extras `[OK]`.
+Cost: venv grew from ~0.3GB to **6.3GB**, `/` has 31GB free afterward (was 40GB before this
+session's git/npm/pip work). No CPU-only fallback needed.
 
 ### Other DaVinci Resolve MCP servers — considered, declined
 
