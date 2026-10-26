@@ -825,3 +825,64 @@ Neither alternative was installed or run — the decision is from repo metadata
 if either becomes active again, but staying maintained isn't by itself a reason to add a
 second compound server that overlaps the one already wired into Claude Code and Hermes
 everywhere on this rig.
+
+## Update (2026-10-26, continued): the subtitle burn-in question is answered — missing font, not a capture-route bug
+
+The gap in the entry above was that `bench_tl_subs`'s video and subtitle items never
+shared a timecode, so no capture could show both regardless of route. Closed that
+properly this time: positioned a fresh copy of `validate_client_testsrc_av.mov` directly
+under the subtitle range using `media_pool.append_to_timeline`'s positioned `clip_infos`
+form (`record_frame` + `record_frame_mode="absolute"`, plus the source `start_frame`/
+`end_frame` it turns out to require) on `bench_tl_subs_preset_retest_v4153` — clip landed
+at frames 86401–86539, inside the subtitle range (86401–86941, 12 items). (First attempt
+at this used the plain unpositioned form with two sequential `AppendToTimeline` calls for
+a video clip and an `espeak-ng`-synthesized speech WAV on a brand-new timeline — both
+landed sequentially one after the other regardless of track type, i.e. still no overlap;
+confirms `AppendToTimeline` without `clip_infos` always appends at the current end of the
+**whole timeline**, not "the start of this specific empty track". The positioned form is
+what actually places something at an arbitrary frame.)
+
+**`quality="frame"` (the v4.15.0 default, `ExportCurrentFrameAsStill`) captured at three
+timecodes inside the confirmed overlap: full-resolution video every time, test pattern,
+focus cross, burned-in source timecode — correct, sharp, zero corruption. The subtitle
+text is **not present in any of them.** The tool's own warning called this exactly right:
+*"whether it burns subtitles in has not been measured"* — now measured, and the answer is
+no, at least for this preset/comp/rig combination.
+
+**Root cause, found in `ResolveDebug.txt` from the same session:** repeated `Fusion |
+ERROR | Template: Could not find font: Segoe UI: Black` and `MediaOut1 cannot get
+Parameter for Input`, dozens of times. `fc-list | grep -i segoe` confirms: **this Linux
+box has no Segoe UI font at all.** The Word Highlight preset's installed-preset data
+(captured in the 2026-10-16 entry's `patch.after`) hardcodes `"font": "Segoe UI",
+"fontStyle": "Black"` — a Windows system font with no Linux equivalent installed here.
+The Fusion title/subtitle composition can't resolve its own text node's font, so the text
+layer never renders: silently empty on the `ExportCurrentFrameAsStill` path (no error
+surfaced to the caller), and almost certainly the same root cause behind the
+2026-10-16 render-route failure ("The Fusion composition … could not be processed
+successfully") — not a GPU/memory issue as that entry's "not confirmed" guess suggested,
+though see below, GPU contention is real and separately cost us this pass too.
+
+**Also tried `quality="render"` on the same frame, for completeness — it hung.** No GPU
+flag was touched going into this (per the user's call: try it as-is, only stop containers
+if it doesn't fit — it fit, 2.4GB VRAM free at the time). Mid-call, `ResolveDebug.txt`
+logged `Urgent message: The GPU failed to perform image processing because of an error.
+Error Code: 999`, immediately followed by the same font errors on repeat, then nothing —
+the calling Python process sat blocked for several minutes with no response and no file
+written. This is the same "render stalls with no failure/timeout path exposed to the
+caller" class the main README's "real workflow test" section already documented, now
+reproduced again on v4.15.3. Resolve itself did **not** crash this time (no new
+`.crashreport` entry) — it just never returned from the render call. Had to `kill -9`
+both the stuck Python process and the Resolve process by PID; `resolve_headless.py stop
+--force` reported success but left the process alive underneath (a `pgrep -x`
+false-negative worth a closer look some other day, not chased further here). GPU VRAM
+was back to baseline (~5.5GB, the three always-on `tts-hq`/`stt`/`upscaler` containers,
+untouched throughout) within seconds of the kill.
+
+**Net result:** the mechanical black-frame bug from 2026-10-16 (`AddRenderJob` failing on
+the default capture path) is fixed and directly confirmed on real, overlapping
+video+subtitle content. The reason `set_subtitle_preset`'s output still can't be visually
+confirmed on this rig isn't a bug in either capture route — it's a missing font. Installing
+a Segoe UI–compatible typeface (or remapping the preset to an installed font) is the actual
+next step to close this out, not more MCP-side debugging; not done here, a system font
+change is out of scope for this pass. `quality="render"` stays something to avoid by
+default on this rig, same conclusion as before, now with a cleaner repro.
