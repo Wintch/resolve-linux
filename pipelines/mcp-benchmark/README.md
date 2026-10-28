@@ -886,3 +886,65 @@ a Segoe UI–compatible typeface (or remapping the preset to an installed font) 
 next step to close this out, not more MCP-side debugging; not done here, a system font
 change is out of scope for this pass. `quality="render"` stays something to avoid by
 default on this rig, same conclusion as before, now with a cleaner repro.
+
+## Update (2026-10-28): community server bumped to v4.16.0, pinning/isError verified live on 21.1.1
+
+Resolve itself: unchanged, **Studio 21.1.1.10**. Upstream moved v4.15.3 → v4.15.4 →
+v4.15.5 → **v4.16.0** in two days (tag `v4.16.0` sits on `c347df6`, which already
+includes the "pinned duplicate reports the restored timeline as current" fix from the
+same morning).
+
+**Live install moved to v4.16.0:** same procedure as every prior bump —
+`backup-v4.15.3-headless` kept as a branch, `v4.16.0-headless` = tag `v4.16.0` + the two
+local commits cherry-picked (`restart_resolve_app` `-nogui`, and the npm
+`allowScripts` approval for `better-sqlite3@11.10.0` — still the locked version).
+**Clean, no conflict.** `pip install -r requirements.txt --upgrade` (all satisfied),
+`npm ci`, `npm run smoke` reports `4.16.0`. `npm audit` lists 3 advisories
+(`body-parser` high, `fast-uri` / `qs` moderate) — pre-existing, the lockfile diff vs
+v4.15.3 is only the version bump; not "fixed" locally, that's upstream's lockfile.
+`doctor.py`: core checks `[OK]`, all 6 AI extras `[OK]`; the scripting-connection
+`[WARN]` is expected with Resolve not running, the Codex/Claude-Desktop `[WARN]`s are
+the same client-wiring notes as before. Tool count in-process: **37**, unchanged.
+
+**What v4.16.0 changes for callers on this rig** (from the vendor CHANGELOG):
+- `timeline`, `timeline_item*`, `timeline_markers`, `timeline_frame`, `timeline_ai`,
+  `graph`, `render` accept `timeline_id` / `timeline_name` and *pin* the call: the
+  server switches to that timeline, acts, and restores the caller's current timeline
+  (verified by readback). Before, a `timeline_id` nothing read was silently dropped
+  and the write landed on whatever was current.
+- Every error envelope now arrives with MCP **`isError: true`**. `bench_lib`'s
+  `_is_error_envelope` fallback (written because `isError` was never set) stays —
+  native's `run_script` still reports script exceptions as successes.
+- Successful calls carrying keys nothing read return `ignored_params`.
+- `timeline_item_id` (`GetUniqueId()`) on the timeline item tools, because on 21.1
+  `item_index` counts transitions.
+- `timeline duplicate` leaves the original current unless `make_current: true`.
+- Bridge keep-alive / `allowed_*_roots` (#326, #327) only affect the free-edition
+  bridge — not used on this Studio rig.
+
+**Live verification**, headless Resolve started with `RESOLVE_SCRIPT_API` /
+`RESOLVE_SCRIPT_LIB` / `PYTHONPATH` / `DISPLAY` / `XAUTHORITY` exported from
+`bench_lib.resolve_env()` first (the 2026-10-26 lesson) — `ready in 10.0s`:
+- `validate_client.py`: **ALL 17 CHECKS PASSED** (11.1s wall).
+- A one-off v4.16 probe over MCP stdio against the community server (compound mode),
+  fixture `MCP-Benchmark` only, guarded by `REQUIRE_FIXTURE_PROJECT` — **20/20**:
+  pinned `timeline_markers get_all` on `bench_tl_media` while `bench_tl` is current
+  (`_operation.timeline` names the pinned one, `restored_current` = `bench_tl`); a
+  pinned marker add landed on `bench_tl_media` only, not on `bench_tl`; current
+  timeline back to `bench_tl` after every pinned call; unknown name and unknown id →
+  `TIMELINE_NOT_FOUND` with `isError: true`; id/name pair that disagree →
+  `TIMELINE_SELECTOR_MISMATCH`; success → `isError: false`; a bogus key →
+  `ignored_params: ["bogus_key_v416"]`; `timeline_item_id` lookup returns the right
+  item, an unknown id → `ITEM_NOT_FOUND`; `duplicate` keeps `bench_tl` current,
+  `make_current: true` switches, and a **pinned** `duplicate` copies the pinned
+  timeline and reports `current: "bench_tl"` (the `c347df6` fix, confirmed). The three
+  copies were deleted afterward. Upstream's own live run was on Studio 19.1.3.7, so
+  this is the first 21.1 confirmation of these paths. Probe script lives outside the
+  repo at `~/Videos/mcp-bench-scratch/probe_v416.py`.
+- Side effect, expected: the pinned marker add and the duplicates triggered the C6
+  auto-archive, leaving `bench_tl_media_archived_v02` and `bench_tl_archived_v13` in
+  the fixture, alongside the existing archives.
+- **Not tested here:** the 21.1-specific item-index-shifts-with-transitions case
+  (`bench_tl` has no transitions), the FCPXML bundle round trip (#324), and
+  `drx generate target:"timeline"` (#318). Headless Resolve stopped cleanly afterward
+  (`stopped in 1.1s`, no process left).
