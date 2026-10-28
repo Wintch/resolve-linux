@@ -50,6 +50,12 @@ script — but every pipeline that *can* stand on its own outside Resolve gets t
   LoRA technique; Tencent Hunyuan AuK (1.5B speech generation/editing model — TTS,
   voice cloning, content/acoustic/paralinguistic editing, enhancement, separation,
   with GGUF port via `audio.cpp`).
+- **[AGENT-VIDEO-SKILLS.md](AGENT-VIDEO-SKILLS.md)**: dated snapshot of the
+  [awesome-claude-video-skills](https://github.com/zhuyansen/awesome-claude-video-skills)
+  catalog (373 agent video skills/MCPs) read against this rig — no Resolve entry exists
+  in it, most editing skills duplicate what the Resolve MCP already does, the one
+  FCPXML round trip into Resolve (OpenChatCut), where Remotion-style generators fit as
+  media, and the `caution`-graded entries (two target Hermes). Nothing installed.
 - **[PERFORMANCE.md](PERFORMANCE.md)**: actionable hardware-performance guide for this
   rig specifically — storage (the big one: the current Media Storage path sustains only
   ~46MB/s write, ~35x slower than the NVMe mount sitting unused), RAM, cache placement,
