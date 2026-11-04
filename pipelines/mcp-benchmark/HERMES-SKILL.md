@@ -43,7 +43,7 @@ Other verified calls: `media_pool.create_timeline_from_clips {name, clip_ids}`,
 
 ## The only real headless limit
 
-The render queue does not advance under `-nogui` (`render.start`/`is_rendering`). Edit and verify in Resolve,
+The render queue does not advance under `-nogui` (`render.start`/`is_rendering`); since 2026-11-04 the MCP starts Resolve inside a virtual display instead and the queue works (see README, 2026-11-04 update). Edit and verify in Resolve,
 deliver with ffmpeg on iashur. Do not claim an ffmpeg output as "made in Resolve".
 
 ## Diagnosing a failure

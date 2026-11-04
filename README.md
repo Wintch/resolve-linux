@@ -2029,6 +2029,9 @@ Cold start flaked once with `Connection closed` on `initialize` and not on 3 lat
 The only headless restriction that stands is the one already documented: no MCP render queue
 (render with ffmpeg); timeline edits and transforms work.
 
+> **Superseded 2026-11-04:** the render-queue restriction belongs to `-nogui`. With Resolve's GUI inside a virtual display
+> (`Xvfb`) the queue renders; see the 2026-11-04 update in `pipelines/mcp-benchmark/README.md`.
+
 ### Hermes "external scripting is disabled" (2026-10-05) was a wrong diagnosis
 
 Hermes reported it could not reach Resolve and told the operator to set Preferences > General >

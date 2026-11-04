@@ -63,3 +63,14 @@ where "does it actually work" evidence lives; this file is just the map.
 | `lut` | 7 | `path`, `list`, `read`, `install`, `remove`, `attenuate`, `capabilities` |
 | `script_plugin` | 17 | `path`, `categories`, `list`, `install`, `remove`, `read`, `validate`, `template`, `list_templates`, `extension_capabilities`, `probe_fuse_lifecycle`, `probe_dctl_lifecycle`, `probe_script_lifecycle`, `safe_install_extension`, `safe_remove_extension`, `refresh_or_restart_required`, `extension_boundary_report` |
 | `knowledge` | 4 | `topics`, `get`, `search`, `capabilities` |
+
+## The vendor's own server (`/opt/resolve/bin/ResolveMCP`, 2026-11-04)
+
+Shipped with Resolve 21 (server `davinci_resolve` 21.1.1); `ResolveMCP --dump-tools` prints the catalog. 14 tools, no
+`action=` layer: `launch_resolve`, `get_resolve_status`, `get_whats_new`, `get_scripting_api`, `search_scripting_api`,
+`get_scripting_docs` (documentation), `run_script` (Python in a sandbox that blocks filesystem, network and process
+access; `resolve` and `project` are pre-injected; `print` and `result` are returned), **`run_script_unsafe`** (the same with
+full system access: a shell), `list_dctls`, `list_luts`, `update_dctl`, `delete_dctl`, `delete_lut`, `generate_lut` (the
+last four confined to `~/.local/share/DaVinciResolve/LUT/MCP`). The community server above has 37 tools and about 720
+typed actions and no caller-supplied code. They can run against the same Resolve at the same time; behind a restricted
+SSH key hide `run_script_unsafe` (`pipelines/mcp-benchmark/mcp_filter.py`).

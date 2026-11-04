@@ -948,3 +948,64 @@ the same client-wiring notes as before. Tool count in-process: **37**, unchanged
   (`bench_tl` has no transitions), the FCPXML bundle round trip (#324), and
   `drx generate target:"timeline"` (#318). Headless Resolve stopped cleanly afterward
   (`stopped in 1.1s`, no process left).
+
+## Update (2026-11-04): Resolve with a GUI inside a virtual display renders; two MCP servers, one shared session
+
+**The "render queue hangs headless" finding was a `-nogui` limit, not an MCP bug.** Resolve Studio 21.1.1.10 started
+with its normal GUI inside `Xvfb :99 -screen 0 1920x1080x24 +extension GLX +render -noreset` (`DISPLAY=:99
+/opt/resolve/bin/resolve`, no `-nogui`; nothing appears on the desktop) answers the scripting API like a headless
+instance and renders: `LoadRenderPreset("H.264 Master")` is **True** (False under `-nogui`), `SetRenderSettings`,
+`AddRenderJob`, `StartRendering` work. A 64 s 1080p clip rendered to a 147 MB H.264 `.mov` in 4.2 s through the
+scripting API and in 5.3 s through the community MCP (`project_manager.create`, `resolve_control.open_page deliver`,
+`media_pool.import_media`, `folder.get_clips`, `create_timeline_from_clips`, `render.load_preset`, `set_settings`,
+`add_job`, `start`). Cold start to the first MCP answer: 8-10 s. Renders still have to target a Media Storage root
+(`~/Videos`).
+
+**Traps found on the way**
+
+- A modal **"Your GPU memory is full"** in the virtual display blocks the API: calls return `None` or
+  `success: false` (`GetCurrentPage()`, `OpenPage`, `SetRenderSettings`, `AddRenderJob` all did). It appeared while the
+  transcoder and upscaler containers held about 1.6 GB of the GPU; it went away after stopping them and clicking OK
+  (`xdotool mousemove 1133 608 click 1`, `DISPLAY=:99`). Look at the display with
+  `ffmpeg -f x11grab -video_size 1920x1080 -i :99 -frames:v 1 shot.png` whenever a call returns `None`.
+- The first render calls right after `open_page` can fail once (one run in four); a retry fixed it.
+- Once Qt is up, Resolve renames its main thread to **"GUI Thread"**: `pgrep -x resolve` stops matching. Use
+  `pgrep -f '^/opt/resolve/bin/resolve( |$)'`.
+- A Resolve left on a display that no longer exists makes every new launch exit with code 0 (Qt single instance,
+  `/tmp/qtsingleapp-DaVinc-*`). Kill it (`-9` if needed) and remove the stale socket and lock file.
+- Never `pkill -f '<pattern>'` from an `ssh host '...'` one-liner when the pattern is also in that command line: it
+  kills its own shell.
+
+**Two MCP servers against the same Resolve**
+
+| | Vendor `/opt/resolve/bin/ResolveMCP` (server `davinci_resolve` 21.1.1) | Community `davinci-resolve-mcp` v4.16.0 |
+|---|---|---|
+| Tools | 14: `launch_resolve`, `get_resolve_status`, `get_whats_new`, `get_scripting_api`, `search_scripting_api`, `run_script`, `run_script_unsafe`, `get_scripting_docs`, `list_dctls`, `list_luts`, `update_dctl`, `delete_dctl`, `delete_lut`, `generate_lut` | 37 compound tools, `action=` values (see `MCP-CAPABILITIES.md`) |
+| Style | you send Python to `run_script` (sandboxed: no `os`, files, network or processes) | typed actions, no caller-supplied code |
+| Verified here | `run_script` returned `21.1.1.10 DaVinci Resolve Studio`; the sandbox refuses `import os` | `resolve_control get_version` returned 21.1.1.10; full render flow above |
+
+**`run_script_unsafe` is a shell.** Its description: "full system access (filesystem, network, subprocess)". Behind an
+MCP-only SSH key (forced command, no shell) that would hand out the whole machine, so `mcp_filter.py` sits between the
+vendor server and the client and removes it from `tools/list` and refuses `tools/call` for it (13 tools left). The
+filter runs on the server side of the key; the client cannot turn it off. Keep it unless the operator decides otherwise.
+
+**New files in this folder**
+
+- `resolve_xvfb_stdio.py`: launcher. Both servers are connected at once by the client, so the session is counted: the
+  first one in starts Xvfb and Resolve, the others reuse them, the last one out Quits Resolve (forced after 30 s) and
+  stops the display. A Resolve on any other display (a person's own session) is refused and never quit. Cleanup
+  survives SIGTERM, SIGHUP, EOF and a closed pipe (stdout and stderr go to `/dev/null` first: a print to a closed
+  pipe used to abort it and leave Xvfb behind). Usage: `resolve_xvfb_stdio.py <community repo> -- <server command>`.
+- `mcp_filter.py --block name[,name] <server command>`: the filter above.
+- `resolve_mcp_wrapper.sh`: two new backends, `xvfb` (community server) and `native-xvfb` (vendor server through the
+  filter). `headless` (`-nogui`) is unchanged.
+- `mcp_probe.py`, `mcp_render_flow.py`, `mcp_both_test.py`, `mcp_filter_test.py`: regression probes (start, answer, a real
+  render, both servers at once with one leaving, the filter). After each, `pgrep -f '^/opt/resolve/bin/resolve( |$)'`
+  and `pgrep -f '^Xvfb :99 '` must print nothing.
+- The MCP-only SSH entry point (`~/bin/mcp_dispatch.sh`, outside this repo) now maps `davinci` to the `xvfb` backend and
+  `davinci-native` to `native-xvfb`; `RESOLVE_MCP_BACKEND=headless` brings back `-nogui`.
+
+Tested from a Hermes container through the real MCP SSH key: `davinci` (37 tools) and `davinci-native` (13 tools) up
+together in 9 s, one leaves and the other keeps answering, nothing left behind after three back-to-back cycles.
+Not done: a request through Hermes itself (the `davinci-resolve` entry is still disabled in the agent's config), and a
+render of a long clip (the longest here was 64 s).
