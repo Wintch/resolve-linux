@@ -10,7 +10,7 @@
 # required, but no authorization protocol specified"). Same logic as
 # bench_lib.resolve_env() -- keep the two in sync.
 #
-# Usage: resolve_mcp_wrapper.sh native|community|headless [server args...]
+# Usage: resolve_mcp_wrapper.sh native|community|headless|xvfb|native-xvfb [server args...]
 #
 # `headless` (2026-10-01): same community backend, but wrapped in
 # davinci-resolve-mcp's own scripts/resolve_headless.py -- `guard` (refuse
@@ -30,7 +30,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-backend="${1:?usage: $0 native|community|headless [server args...]}"
+backend="${1:?usage: $0 native|community|headless|xvfb|native-xvfb [server args...]}"
 shift
 
 # DISPLAY: a rootless Xwayland picks its number per login (:0, :1, ...), so a
@@ -87,8 +87,23 @@ case "${backend}" in
         exec "${repo}/venv/bin/python" "${script_dir}/resolve_headless_stdio.py" \
             "${repo}" -- "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
         ;;
+    xvfb)
+        # 2026-11-04: Resolve WITH its GUI in a private Xvfb (no -nogui): the render queue works there.
+        repo="${RESOLVE_MCP_COMMUNITY_REPO:-${HOME}/resolve-install/davinci-resolve-mcp}"
+        cd "${repo}"
+        exec "${repo}/venv/bin/python" "${script_dir}/resolve_xvfb_stdio.py" \
+            "${repo}" -- "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
+        ;;
+    native-xvfb)
+        # 2026-11-04: the vendor MCP (/opt/resolve/bin/ResolveMCP) against the Resolve that lives in the private Xvfb;
+        # it shares the session with the community server (the last one out quits Resolve)
+        repo="${RESOLVE_MCP_COMMUNITY_REPO:-${HOME}/resolve-install/davinci-resolve-mcp}"
+        cd "${repo}"
+        exec "${repo}/venv/bin/python" "${script_dir}/resolve_xvfb_stdio.py" \
+            "${repo}" -- "${repo}/venv/bin/python" "${script_dir}/mcp_filter.py" --block "${RESOLVE_MCP_NATIVE_BLOCK:-run_script_unsafe}" -- "${RESOLVE_MCP_NATIVE_BINARY:-/opt/resolve/bin/ResolveMCP}" "$@"
+        ;;
     *)
-        echo "unknown backend '${backend}' (want native|community|headless)" >&2
+        echo "unknown backend '${backend}' (want native|community|headless|xvfb|native-xvfb)" >&2
         exit 2
         ;;
 esac
