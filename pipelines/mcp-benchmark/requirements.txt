@@ -1,0 +1,8 @@
+# Everything in this directory runs on the community MCP server's own venv
+# (~/resolve-install/davinci-resolve-mcp/venv), which already carries all of
+# these -- this file exists so the scripts can also be run from a fresh venv:
+#   python3 -m venv venv && venv/bin/pip install -r requirements.txt
+mcp>=1.30
+numpy
+pillow
+# not pip: ffmpeg/ffprobe (loudness gate, fixtures), espeak-ng (bench_03)

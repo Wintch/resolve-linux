@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+venv/
+*.bak-*
+# benchmark output, regenerated per run
+pipelines/*/*_results.jsonl
+
+# This installation only (hosts, paths, accounts, current state) and the raw cleanup material: never in the public repo
+CURRENT_INSTALLATION.md
+local-notes/

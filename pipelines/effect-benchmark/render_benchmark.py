@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Render-profile benchmark: same timeline, multiple render presets, one comparable record each.
+
+Companion to `effect_benchmark.py` (per-effect GPU/timing) -- this one measures the other
+half of a real Studio workflow: actually exporting the current timeline through several
+delivery presets/codecs, sampling `nvidia-smi` throughout each render via the same
+subprocess-based `GpuPoller` (see that file's docstring for *why* it has to be a subprocess,
+not a Python thread -- the scripting API's blocking calls don't release the GIL). Reuses
+`GpuPoller` from `effect_benchmark.py` rather than duplicating it.
+
+Typical use: put a different real grading effect on each clip of a test timeline (e.g.
+Noise Reduction, Film Grain, Analog Damage, applied by hand -- there is no scripting call
+to add an OFX), then compare the render across several delivery profiles.
+
+Usage:
+    ./render_benchmark.py --list-presets
+    ./render_benchmark.py --preset "H.264 Master" --preset "H.265 Master" --preset "ProRes 422 HQ"
+    ./render_benchmark.py --preset "H.264 Master" --keep    # don't delete the output file after
+
+Renders go to --outdir (default: ~/Videos/render_benchmark_tmp). It must be inside a
+registered Media Storage volume: any other path fails with a blocking "Render Path
+Inaccessible" dialog (see README.md's "Known limitations on Linux"). Deleted after
+`ffprobe` verification unless --keep. Results append to --out (default: render_benchmark_results.jsonl next to this
+script), same convention as effect_benchmark.py.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from effect_benchmark import GpuPoller, connect  # noqa: E402
+
+DEFAULT_OUT = Path(__file__).resolve().parent / "render_benchmark_results.jsonl"
+# Must be inside a registered Media Storage volume, or the render fails with a blocking dialog.
+DEFAULT_OUTDIR = Path.home() / "Videos" / "render_benchmark_tmp"
+
+TERMINAL_STATUSES = {"Complete", "Cancelled", "Failed"}
+
+
+def probe_output(path: Path) -> dict:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "format=duration,size:stream=codec_name,width,height",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, timeout=15,
+    )
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return {"ffprobe_error": out.stderr.strip()}
+
+
+def bench_one_preset(proj, preset: str, outdir: Path, poll_s: float, max_render_s: float) -> tuple:
+    """Returns (record, output files). Every exit path returns that same pair:
+    the early error returns used to hand back a bare dict, which main()'s
+    two-value unpack turned into a ValueError instead of a recorded error row."""
+    record = {"preset": preset}
+    if not proj.LoadRenderPreset(preset):
+        record["error"] = "LoadRenderPreset failed"
+        return record, []
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    stamp = f"benchmark_{preset.replace(' ', '_').replace('/', '-')}"
+    ok = proj.SetRenderSettings({
+        "SelectAllFrames": True,
+        "TargetDir": str(outdir),
+        "CustomName": stamp,
+    })
+    record["set_render_settings_ok"] = bool(ok)
+
+    job_id = proj.AddRenderJob()
+    if not job_id:
+        record["error"] = "AddRenderJob returned no job_id"
+        return record, []
+    record["job_id"] = job_id
+
+    t0 = time.monotonic()
+    with GpuPoller() as poller:
+        proj.StartRendering([job_id], False)
+        status = {}
+        while True:
+            status = proj.GetRenderJobStatus(job_id)
+            if status.get("JobStatus") in TERMINAL_STATUSES:
+                break
+            if time.monotonic() - t0 > max_render_s:
+                # the render livelock documented in the README never reaches a
+                # terminal status on its own -- don't poll it forever
+                proj.StopRendering()
+                record["error"] = f"no terminal status after {max_render_s:.0f}s, StopRendering called"
+                break
+            time.sleep(poll_s)
+    wall_s = time.monotonic() - t0
+
+    samples = poller.samples
+    record.update({
+        "wall_s": round(wall_s, 3),
+        "job_status": status.get("JobStatus"),
+        "resolve_time_taken_ms": status.get("TimeTakenToRenderInMs"),
+        "gpu_samples": len(samples),
+        "gpu_util_max_pct": max((s["util_pct"] for s in samples), default=None),
+        "gpu_util_avg_pct": round(sum(s["util_pct"] for s in samples) / len(samples), 1) if samples else None,
+        "gpu_power_max_w": max((s["power_w"] for s in samples), default=None),
+        "gpu_sm_clock_max_mhz": max((s["sm_clock_mhz"] for s in samples), default=None),
+    })
+
+    out_files = sorted(outdir.glob(f"{stamp}*"))
+    if out_files:
+        f = out_files[0]
+        record["output_file_size_mb"] = round(f.stat().st_size / 1e6, 2)
+        record["ffprobe"] = probe_output(f)
+    else:
+        record["output_file_size_mb"] = None
+
+    return record, out_files
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--preset", action="append", dest="presets", default=[],
+                     help="render preset name, repeatable (default: H.264 Master, H.265 Master, ProRes 422 HQ)")
+    ap.add_argument("--list-presets", action="store_true")
+    ap.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--poll-s", type=float, default=1.0)
+    ap.add_argument("--max-render-s", type=float, default=3600.0,
+                     help="give up on a job that hasn't reached a terminal status by then (default: 3600)")
+    ap.add_argument("--keep", action="store_true", help="don't delete render output after ffprobe verification")
+    args = ap.parse_args()
+
+    resolve = connect()
+    proj = resolve.GetProjectManager().GetCurrentProject()
+    tl = proj.GetCurrentTimeline()
+
+    if args.list_presets:
+        print("\n".join(proj.GetRenderPresetList()))
+        return
+
+    presets = args.presets or ["H.264 Master", "H.265 Master", "ProRes 422 HQ"]
+
+    print(f"# timeline: {tl.GetName()}", file=sys.stderr)
+    with args.out.open("a") as f:
+        for preset in presets:
+            # clear any stale queued jobs so StartRendering only runs this one
+            for jid in [j["JobId"] for j in proj.GetRenderJobList()]:
+                proj.DeleteRenderJob(jid)
+            record, out_files = bench_one_preset(proj, preset, args.outdir, args.poll_s, args.max_render_s)
+            record["ts"] = time.time()
+            record["timeline"] = tl.GetName()
+            print(json.dumps(record))
+            f.write(json.dumps(record) + "\n")
+            f.flush()
+            if not args.keep:
+                for of in out_files:
+                    of.unlink()
+
+
+if __name__ == "__main__":
+    main()

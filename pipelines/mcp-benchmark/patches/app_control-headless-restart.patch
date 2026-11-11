@@ -1,0 +1,27 @@
+From 26b9107ce6d3e6915a530738e422da2a36e1083f Mon Sep 17 00:00:00 2001
+From: resolve-linux <noreply@example.invalid>
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH] fix(app-control): restart_resolve_app relaunches headless on
+ Linux
+
+Upstream still launches Resolve with no args on Linux restart.
+---
+ src/utils/app_control.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/utils/app_control.py b/src/utils/app_control.py
+index ceb5e7f..253ab6b 100644
+--- a/src/utils/app_control.py
++++ b/src/utils/app_control.py
+@@ -263,7 +263,7 @@ def restart_resolve_app(resolve_obj, wait_seconds: int = 5) -> bool:
+         elif platform.system().lower() == 'windows':
+             subprocess.Popen([resolve_path], stdin=subprocess.DEVNULL)
+         elif platform.system().lower() == 'linux':
+-            subprocess.Popen([resolve_path], stdin=subprocess.DEVNULL)
++            subprocess.Popen([resolve_path, '-nogui'], stdin=subprocess.DEVNULL)
+         
+         return True
+     except Exception as e:
+-- 
+2.47.3
+
