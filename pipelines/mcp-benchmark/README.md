@@ -86,9 +86,18 @@ display/cookie mismatch, not the External scripting preference.
 |---|---|---|---|
 | `native` | vendor `ResolveMCP` | one already open | someone at the desktop |
 | `community` | community `src/server.py` | one already open | someone at the desktop |
-| `headless` | community, via `resolve_headless_stdio.py` | `-nogui`, started and stopped by the backend (`guard`/`start`/`run`/`stop`) | unattended caller (recommended on 21.2); edits and renders; no pages, a raised dialog blocks the call. On 21.2 the same `-nogui` Resolve also gives graded frames to the vendor server / `ResolveClient` (`Timeline.ExportFrame` via `run_script`, `get_image`) |
+| `headless` | community, via `resolve_headless_stdio.py` | `-nogui` on the desktop's X server, started and stopped by the backend (`guard`/`start`/`run`/`stop`) | one unattended client; edits and renders; no pages, a raised dialog blocks the call; dies with the desktop session; not shared (a second client's exit stops it) |
 | `xvfb` | community, via `resolve_xvfb_stdio.py` | full GUI in a private Xvfb | unattended caller that needs a GUI page other than Color (opening Color aborts Resolve here) |
 | `native-xvfb` | vendor, through `mcp_filter.py --block run_script_unsafe` | the same Xvfb session as `xvfb` | unattended caller, vendor tools without the shell |
+| `nogui` | community, via `resolve_xvfb_stdio.py` with `RESOLVE_XVFB_NOGUI=1` | `-nogui` bound to the private Xvfb, shared and counted like `xvfb` | **recommended for unattended callers**: edits and renders; no pages, so nothing can open the Color page; independent of any desktop session |
+| `native-nogui` | vendor, through `mcp_filter.py --block run_script_unsafe` | the same `-nogui` session as `nogui` | the vendor tools on that session: `run_script` (`Timeline.ExportFrame`, `TimelineItem.AddEffect` on 21.2), `get_image`, `describe_grade`, ... |
+
+The `xvfb*` and `nogui*` backends share one session per display: the first client in starts Xvfb
+and Resolve in its mode (GUI or `-nogui`), later clients reuse it, the last one out quits both.
+Verified on 21.2 with a community and a vendor client at once: the community one leaving does not
+stop the session, `run_script_unsafe` stays unlisted and refused (17 tools visible), and nothing is
+left after the last client. `mcp_render_flow.py` renders H.264 + PCM through `nogui`, and
+`validate_client.py` passes inside it (grab_still skipped).
 
 **Why Xvfb.** `-nogui` has no pages (`OpenPage("color")` leaves the page unchanged) and cannot show a dialog it raises: the call that triggered it never returns.
 A missing render `TargetDir` is enough ("Render Path Inaccessible"), which is the likely cause of
@@ -107,8 +116,8 @@ Rendering through the community MCP (`mcp_render_flow.py`: create project, impor
 `load_preset` "H.264 Master", `set_settings`, `add_job`, `start`) works on 21.2 with both
 backends and writes H.264 + PCM; under `xvfb` its final `project_manager delete` of the current
 project can fail (`DeleteProject` returns `False`) and leave the `zz_mcp_render_test` project
-behind, under `headless` it succeeds. So on 21.2 use `headless` (`-nogui`) for unattended
-callers, and keep `xvfb` only for work that needs a visible GUI page other than Color.
+behind, under `headless` and `nogui` it succeeds. So on 21.2 use `nogui` / `native-nogui` for
+unattended callers, and keep `xvfb` only for work that needs a visible GUI page other than Color.
 
 **`resolve_xvfb_stdio.py`** lets a client keep both servers connected at once: every instance
 registers in a clients directory under `/tmp`; the first one starts Xvfb (`RESOLVE_XVFB_DISPLAY`,

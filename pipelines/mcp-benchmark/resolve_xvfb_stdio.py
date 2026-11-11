@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""`resolve_headless.py run -- <cmd>`, but Resolve runs WITH its GUI inside a private Xvfb instead of `-nogui`.
+"""`resolve_headless.py run -- <cmd>`, but Resolve is bound to a private Xvfb, in one of two modes:
 
-Why: `-nogui` has no pages (no Color page, so no GrabStill) and a dialog it raises blocks the call forever; with a GUI
-(here an invisible one) pages work, a modal can be captured and dismissed, and the render queue works (measured: 64 s of
-1080p to H.264 in 4.2 s). A desktop session already on the machine is never touched.
+  * -nogui (RESOLVE_XVFB_NOGUI=1, wrapper backends nogui / native-nogui; the recommended unattended mode): no pages, so
+    nothing can open the Color page; renders, Timeline.ExportFrame and the vendor get_image work; a dialog it raises
+    cannot be shown and blocks the call that raised it (e.g. a render TargetDir that does not exist);
+  * GUI (wrapper backends xvfb / native-xvfb): pages exist and a modal can be captured and dismissed, but opening the
+    Color page aborts Resolve (CUDA-OpenGL interop fails on Xvfb's software GL). Render measured: 64 s of 1080p to
+    H.264 in 4.2 s.
+
+A desktop session already on the machine is never touched.
 
 An MCP client may keep TWO Resolve MCP servers connected at once (the vendor ResolveMCP and the community davinci-resolve-mcp),
 each started through this script, so the Resolve session is shared and counted:
@@ -14,6 +19,9 @@ each started through this script, so the Resolve session is shared and counted:
   * a Resolve running on any OTHER display (a person's own session) is refused, never touched;
   * on SIGTERM/SIGHUP/SIGINT, EOF or a vanished client (closed pipe) the clean-up still runs;
   * status chatter goes to stderr: stdout is the MCP JSON-RPC channel.
+
+The first client in decides the mode (GUI or -nogui) of the shared session; later ones reuse it as it is. Neither mode
+depends on a desktop session.
 
 Usage: resolve_xvfb_stdio.py <repo> -- <server command...>      (<repo> = the community server's checkout)
 """
@@ -36,6 +44,7 @@ sys.stdout = sys.stderr
 DISPLAY = os.environ.get("RESOLVE_XVFB_DISPLAY", ":99")
 SIZE = os.environ.get("RESOLVE_XVFB_SIZE", "1920x1080x24")
 BOOT_TIMEOUT = float(os.environ.get("RESOLVE_XVFB_BOOT_TIMEOUT", "120"))
+NOGUI = os.environ.get("RESOLVE_XVFB_NOGUI", "") == "1"
 TAG = DISPLAY.lstrip(":")
 LOCK_PATH = f"/tmp/resolve_xvfb_{TAG}.lock"
 CLIENTS = f"/tmp/resolve_xvfb_{TAG}.clients"
@@ -157,7 +166,7 @@ def ensure_session():
             return 3
     else:
         log("adopting the idle Xvfb left on " + DISPLAY)
-    command = rr.launch_command(headless=False)
+    command = rr.launch_command(headless=NOGUI)
     if not command:
         log("REFUSE: no DaVinci Resolve install found")
         return 3

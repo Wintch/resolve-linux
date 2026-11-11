@@ -246,6 +246,9 @@ For callers with nobody at the machine (an agent over SSH, an MCP client on anot
   **Do not open the Color page there**: CUDA-OpenGL interop fails on Xvfb's software GL (`Failed to register OpenGL
   object for CUDA interop: cudaErrorUnknown`, `Packer OpenGL interop failed`), Resolve aborts, and every later API call
   returns `None`. Use `-nogui` with `ExportFrame`/`get_image` for frames instead.
+- **`-nogui` inside the private `Xvfb`** (the `nogui` / `native-nogui` wrapper backends, `RESOLVE_XVFB_NOGUI=1`): the
+  same shared, counted session, but Resolve runs with `-nogui` bound to the virtual display. No pages to abort it, no
+  tie to a desktop session, renders and (on 21.2) frames and effects work: the recommended mode for unattended callers.
 - `run_script_unsafe` is a shell. Behind a restricted SSH key, put the vendor server behind
   [`mcp_filter.py`](pipelines/mcp-benchmark/mcp_filter.py), which hides it from `tools/list` and refuses calls to it.
 

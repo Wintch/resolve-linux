@@ -9,7 +9,7 @@
 # init ("Authorization required, but no authorization protocol specified").
 # Same logic as bench_lib.resolve_env() -- keep the two in sync.
 #
-# Usage: resolve_mcp_wrapper.sh native|community|headless|xvfb|native-xvfb [server args...]
+# Usage: resolve_mcp_wrapper.sh native|community|headless|xvfb|native-xvfb|nogui|native-nogui [server args...]
 #
 #   native       the vendor server (/opt/resolve/bin/ResolveMCP) against a Resolve someone already has open
 #   community    davinci-resolve-mcp against a Resolve someone already has open
@@ -21,13 +21,17 @@
 #   xvfb         community server; Resolve runs WITH its GUI inside a private Xvfb (resolve_xvfb_stdio.py),
 #                which is what makes the render queue work
 #   native-xvfb  vendor server against that same Xvfb session, through mcp_filter.py (run_script_unsafe removed)
+#   nogui        like xvfb, but the shared session runs Resolve with -nogui (bound to the private Xvfb, no pages):
+#                no Color page to abort Resolve, no tie to a desktop session. Recommended for unattended callers.
+#   native-nogui vendor server against that same -nogui session, through mcp_filter.py
+#                (xvfb/native-xvfb and nogui/native-nogui share one session on the display: the first one in picks the mode)
 #
 # An SSH-invoked process has neither DISPLAY nor XAUTHORITY: without the
 # discovery below Resolve aborts in QApplication::init (SIGABRT).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-backend="${1:?usage: $0 native|community|headless|xvfb|native-xvfb [server args...]}"
+backend="${1:?usage: $0 native|community|headless|xvfb|native-xvfb|nogui|native-nogui [server args...]}"
 shift
 
 # DISPLAY: a rootless Xwayland picks its number per login (:0, :1, ...), so a
@@ -81,23 +85,26 @@ case "${backend}" in
         exec "${repo}/venv/bin/python" "${script_dir}/resolve_headless_stdio.py" \
             "${repo}" -- "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
         ;;
-    xvfb)
-        # Resolve WITH its GUI in a private Xvfb (no -nogui): the render queue works there.
+    xvfb|nogui)
+        # the community server against a shared session in a private Xvfb: Resolve WITH its GUI (xvfb) or
+        # with -nogui bound to that display (nogui); the first client in starts it in its mode
+        if [[ "${backend}" == nogui ]]; then export RESOLVE_XVFB_NOGUI=1; else unset RESOLVE_XVFB_NOGUI; fi
         repo="${RESOLVE_MCP_COMMUNITY_REPO:-${HOME}/resolve-install/davinci-resolve-mcp}"
         cd "${repo}"
         exec "${repo}/venv/bin/python" "${script_dir}/resolve_xvfb_stdio.py" \
             "${repo}" -- "${repo}/venv/bin/python" "${repo}/src/server.py" "$@"
         ;;
-    native-xvfb)
+    native-xvfb|native-nogui)
         # the vendor MCP (/opt/resolve/bin/ResolveMCP) against the Resolve that lives in the private Xvfb;
         # it shares the session with the community server (the last one out quits Resolve)
+        if [[ "${backend}" == native-nogui ]]; then export RESOLVE_XVFB_NOGUI=1; else unset RESOLVE_XVFB_NOGUI; fi
         repo="${RESOLVE_MCP_COMMUNITY_REPO:-${HOME}/resolve-install/davinci-resolve-mcp}"
         cd "${repo}"
         exec "${repo}/venv/bin/python" "${script_dir}/resolve_xvfb_stdio.py" \
             "${repo}" -- "${repo}/venv/bin/python" "${script_dir}/mcp_filter.py" --block "${RESOLVE_MCP_NATIVE_BLOCK:-run_script_unsafe}" -- "${RESOLVE_MCP_NATIVE_BINARY:-/opt/resolve/bin/ResolveMCP}" "$@"
         ;;
     *)
-        echo "unknown backend '${backend}' (want native|community|headless|xvfb|native-xvfb)" >&2
+        echo "unknown backend '${backend}' (want native|community|headless|xvfb|native-xvfb|nogui|native-nogui)" >&2
         exit 2
         ;;
 esac
