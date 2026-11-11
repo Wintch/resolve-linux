@@ -76,11 +76,18 @@ caller-supplied code).
 
 ## The vendor's own server (`/opt/resolve/bin/ResolveMCP`)
 
-Shipped with Resolve Studio 21.1+ (server `davinci_resolve` 21.1.1); `ResolveMCP --dump-tools` prints the catalog. 14 tools, no
-`action=` layer: `launch_resolve`, `get_resolve_status`, `get_whats_new`, `get_scripting_api`, `search_scripting_api`,
-`get_scripting_docs` (documentation), `run_script` (Python in a sandbox that blocks filesystem, network and process
-access; `resolve` and `project` are pre-injected; `print` and `result` are returned), **`run_script_unsafe`** (the same with
-full system access: a shell), `list_dctls`, `list_luts`, `update_dctl`, `delete_dctl`, `delete_lut`, `generate_lut` (the
-last four confined to `~/.local/share/DaVinciResolve/LUT/MCP`). The community server above has 37 tools and about 720
-typed actions and no caller-supplied code. They can run against the same Resolve at the same time; behind a restricted
-SSH key hide `run_script_unsafe` (`pipelines/mcp-benchmark/mcp_filter.py`).
+Shipped with Resolve Studio 21.1+; `ResolveMCP --dump-tools` prints the catalog. On 21.2, 18 tools, no
+`action=` layer: `launch_resolve`, `get_resolve_status`, `get_whats_new`, `get_scripting_api` (the 21.2 stubs),
+`search_scripting_api`, `get_scripting_docs` (documentation), `run_script` (Python 3.14 in a sandbox that blocks
+filesystem, network and process access; `resolve` and `project` are pre-injected; `print` and `result` are returned),
+**`run_script_unsafe`** (the same with full system access: a shell), `list_luts`, `read_dctl`, `write_dctl`,
+`delete_lut_file` (a file name in the MCP LUT directory `~/.local/share/DaVinciResolve/LUT/MCP`, `.cube` or `.dctl`),
+`generate_lut`, `list_extras_packages`, `install_extras_package`, `describe_grade` (per-node tools, labels, enabled state,
+CDL equivalent and color management; sources `timeline_item`, `timeline`, `photo`), `get_image` (a rendered, graded frame;
+sources `timeline`, `timeline_item`, `media_pool_clip`, `photo`; JPEG downscaled to 1024 px unless `max_dimension` is
+given; works under `-nogui`; the same frame gives identical bytes) and `get_thumbnails` (a grid image of several frames;
+the playhead never moves). 21.1.1 shipped 14: `delete_lut_file` was `delete_lut` (same argument), its `list_dctls`,
+`update_dctl` and `delete_dctl` are not in the 21.2 catalog, and `read_dctl`, `write_dctl`, the extras, `describe_grade`,
+`get_image` and `get_thumbnails` did not exist. The community server above has 37 tools and about 720 typed actions and no
+caller-supplied code. They can run against the same Resolve at the same time; behind a restricted SSH key hide
+`run_script_unsafe` (`pipelines/mcp-benchmark/mcp_filter.py`).

@@ -17,7 +17,9 @@ What this pipeline gives you without a snapshot:
 - **Resolve app rollback**: the currently-installed `davinci-resolve-studio` and
   `davinci-resolve-studio-data` packages, repacked from the live system with
   `dpkg-repack`. If the original `.run` is gone, this is the only way back to the exact
-  build without downloading it again from Blackmagic.
+  build without downloading it again from Blackmagic. The repack does not need root:
+  `fakeroot -u dpkg-repack davinci-resolve-studio davinci-resolve-studio-data` run as a
+  normal user (with `dpkg-repack` and `fakeroot` installed) writes the same two `.deb`s into the current directory.
 - **Project/config rollback**: a snapshot via
   [`resolve-backup/backup_resolve_config.py`](../resolve-backup/backup_resolve_config.py)
   (project library, preferences, Fusion/Fairlight user state).
@@ -32,21 +34,26 @@ check automatically.
 
 ## Disk space
 
-- **Build**: the `.run` is about 11 GB and makeresolvedeb's unpack dir plus the two
-  resulting `.deb`s roughly double it. Put `RESOLVE_UPDATE_DIR` on a disk with tens of GB
-  free, not a tight root filesystem.
+- **Download**: the Studio 21.2 Linux `.zip` is about 11.5 GB and holds the `.run` (about
+  11.6 GB) plus Blackmagic's installation notes. `download_resolve.sh` refuses to start
+  without room for about twice the `.zip` (the `.zip` plus the extracted `.run`).
+- **Build**: the `.run` is about 11.6 GB for 21.2, and makeresolvedeb's unpack dir plus the two
+  resulting `.deb`s roughly double it (for 21.2 on the reference machine: main `.deb`
+  ~3.2 GB, `-data` ~5.1 GB). Put `RESOLVE_UPDATE_DIR` on a disk with tens of GB free, not a
+  tight root filesystem.
 - **Install**: `/opt/resolve` is rewritten in place. `/opt/resolve/Extras` (the AI packs,
   often over 20 GB) is downloaded at runtime by Resolve's Extras Download Manager, is not
   owned by either package, and survives an upgrade. `install_resolve.sh` sums the real
   payload of the built `.deb`s (makeresolvedeb sets no `Installed-Size`), compares it with
   `/opt/resolve` minus `Extras`, and refuses to run `apt install` without the net-new space
   plus a 2 GB margin: a disk-full mid-unpack leaves Resolve half-installed.
-- **Rollback bundles** are a few hundred MB each, timestamped, and never pruned
-  automatically.
+- **Rollback bundles** hold repacked copies of both installed packages (several GB each, roughly the size of the
+  built `.deb`s) plus the config/project snapshot. They are timestamped and never pruned automatically.
 
 ## Configuration
 
-The scripts run as root (they call `dpkg`/`apt` directly, no `sudo` inside), but Resolve's
+`download_resolve.sh` runs as any user and needs none of the settings below. The other
+scripts run as root (they call `dpkg`/`apt` directly, no `sudo` inside), but Resolve's
 data lives in the desktop user's home, and root's `$HOME` is `/root`: trusting it would
 snapshot an empty directory without any error. So the user is explicit (see `lib.sh`):
 
@@ -63,18 +70,26 @@ snapshot an empty directory without any error. So the user is explicit (see `lib
 cd pipelines/resolve-update
 export TARGET_USER=alice RESOLVE_UPDATE_DIR=/mnt/bigdisk
 
-# 1. Snapshot the current, tested state: repacked .debs + config/project library + a
+# 1. Download the installer as a normal user (no sudo). It uses the same "download only"
+#    request as the site's own button: no account and no registration data. Default is
+#    the newest Linux release of Studio; --free for the free edition, --version X.Y[.Z]
+#    for a specific release, --list to print the Linux releases the site lists, --dry-run
+#    to print the file and its size without downloading. DEST_DIR defaults to the current
+#    directory. An interrupted download resumes (curl -C -) on rerun.
+./download_resolve.sh --studio "$RESOLVE_UPDATE_DIR"
+unzip "$RESOLVE_UPDATE_DIR"/<downloaded file>.zip -d "$RESOLVE_UPDATE_DIR"
+rm "$RESOLVE_UPDATE_DIR"/<downloaded file>.zip    # not needed once the .run is extracted
+
+# 2. Snapshot the current, tested state: repacked .debs + config/project library + a
 #    manifest (packages, kernel, driver, disk and LVM state). Additive; installs only
 #    dpkg-repack if missing.
 sudo -E ./preflight_backup.sh
 
-# 2. Download the new .run by hand. Blackmagic gates the Linux download behind a
-#    free-account login, so this can't be scripted. Check that your makeresolvedeb release
-#    supports that Resolve version (1.10.1 is needed for 21.1: it packages the new
-#    Immersive directory and the bundled ResolvePython).
-
-# 3. Build and install. Refuses to run with stale .debs in the build dir (apt would get
-#    two versions of the same package) or without enough disk space.
+# 3. Build and install. Check first that your makeresolvedeb release supports that
+#    Resolve version (1.10.1 is needed for 21.1: it packages the new Immersive directory
+#    and the bundled ResolvePython; it also converts 21.2 through its 21.* path, with 0
+#    errors on the reference machine). Refuses to run with stale .debs in the build dir
+#    (apt would get two versions of the same package) or without enough disk space.
 sudo -E MAKERESOLVEDEB=/path/to/makeresolvedeb_1.10.1_multi.sh \
     ./install_resolve.sh /path/to/DaVinci_Resolve_Studio_<version>_Linux.run
 
@@ -83,6 +98,22 @@ sudo -E MAKERESOLVEDEB=/path/to/makeresolvedeb_1.10.1_multi.sh \
 #    If something is wrong:
 sudo -E ./rollback.sh            # reinstalls the newest bundle's .debs (or pass a bundle dir)
 ```
+
+About makeresolvedeb, if you build by hand instead of through `install_resolve.sh`:
+
+- It refuses an installer path outside its working directory: `cd` to the directory that
+  holds the `.run` and pass it as a bare file name (`install_resolve.sh` moves the `.run`
+  into the build dir for this reason).
+- It is meant to run as a normal user (it builds with `fakeroot` and `dpkg-deb`, and warns
+  when run as root; `install_resolve.sh` runs it as root, so expect that warning there). It writes two `.deb`s, the main
+  package and `-data`, e.g. `davinci-resolve-studio_21.2-mrd1.10.1_amd64.deb` and
+  `davinci-resolve-studio-data_21.2-mrd1.10.1_amd64.deb`.
+- Only the final install needs root: `sudo apt install ./<main>.deb ./<data>.deb`, both
+  in one command. A hand build skips the stale-`.deb` and disk-space checks of
+  `install_resolve.sh`.
+
+After installing 21.2, Resolve may offer new AI packages through its Extras Download
+Manager. The `.deb`s contain `/opt/resolve/Extras` only as an empty directory, so the upgrade leaves the Extras already downloaded untouched.
 
 `rollback.sh` does not restore project files automatically (that could overwrite newer
 work); it prints the `cp` command to use if the older Resolve cannot open projects saved

@@ -29,6 +29,9 @@ MEDIA_TIMELINE = "bench_tl_media"
 SCRATCH = Path.home() / "Videos" / "mcp-bench-scratch"
 MEDIA_CLIP = SCRATCH / "validate_client_testsrc_av.mov"
 RENDER_PRESET = "ProRes 422 HQ"
+# Resolve 21.2+: an OFX effect added and removed through the API (TimelineItem.AddEffect /
+# DeleteEffects), proven with lossless Timeline.ExportFrame frames
+TEST_EFFECT_ID = "Resolve FX/Resolve FX Film Emulation/Film Grain"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
@@ -61,14 +64,33 @@ def expect(condition, detail):
     return detail
 
 
+class Skip(Exception):
+    """A check that cannot run in this setup (reported as SKIP, not as a failure)."""
+
+
+def resolve_is_nogui() -> bool:
+    """True when the running Resolve was started with -nogui: it has no pages, so
+    OpenPage("color") leaves the page unchanged and Timeline.GrabStill cannot work."""
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            argv = cmdline.read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if argv and argv[0].endswith(b"/resolve") and b"-nogui" in argv:
+            return True
+    return False
+
+
 async def main():
     checks = []
 
     async def check(label, coro_fn):
         try:
-            checks.append((label, True, str(await coro_fn())[:120]))
+            checks.append((label, "OK", str(await coro_fn())[:120]))
+        except Skip as exc:
+            checks.append((label, "SKIP", str(exc)[:200]))
         except Exception as exc:
-            checks.append((label, False, repr(exc)[:200]))
+            checks.append((label, "FAIL", repr(exc)[:200]))
 
     async with ResolveClient() as client:
 
@@ -104,6 +126,13 @@ result = {"selected": bool(tl and proj.SetCurrentTimeline(tl))}
             expect(TEST_LUT not in str(await client.list_luts()), f"{TEST_LUT} still listed after delete_lut")
             return "generated, listed, deleted"
 
+        async def on_fixture_timeline(coro_fn):
+            current = await client.run_script(
+                "result = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline().GetName()"
+            )
+            expect(current == "bench_tl", f"current timeline is {current!r}, not bench_tl -- check not run")
+            return await coro_fn()
+
         async def must_raise(label, coro_fn):
             try:
                 result = await coro_fn()
@@ -133,8 +162,10 @@ result = {"selected": bool(tl and proj.SetCurrentTimeline(tl))}
             again = await client.import_media([clip])  # dedup-by-path used to return nothing
             return expect(first == again == [clip.name], f"first={first} again={again}")
 
-        async def grab_still():
-            r = await client.run_script(
+        async def select_media_timeline(page=None):
+            """Make bench_tl_media (one real clip, built from the imported fixture clip on first
+            use) the current timeline; open `page` if given. Returns the script's result."""
+            return await client.run_script(
                 f"""
 proj = resolve.GetProjectManager().GetCurrentProject()
 mp = proj.GetMediaPool()
@@ -157,12 +188,19 @@ if tl is None:
     if tl is None:
         raise RuntimeError("CreateTimelineFromClips failed")
 proj.SetCurrentTimeline(tl)
-resolve.OpenPage("color")
-result = {{"timeline": tl.GetName(), "page": resolve.GetCurrentPage()}}
+if {page!r}:
+    resolve.OpenPage({page!r})
+result = {{"timeline": tl.GetName(), "page": resolve.GetCurrentPage(), "start": tl.GetStartTimecode()}}
 """,
                 timeout=30,
             )
-            expect(r == {"timeline": MEDIA_TIMELINE, "page": "color"}, r)
+
+        async def grab_still():
+            if resolve_is_nogui():
+                await select_media_timeline()  # the render check below still needs it current
+                raise Skip("needs the Color page; a -nogui Resolve has no pages (frame_image covers -nogui)")
+            r = await select_media_timeline("color")
+            expect((r["timeline"], r["page"]) == (MEDIA_TIMELINE, "color"), r)
 
             # A PNG header proves nothing: a still exported too soon after
             # GrabStill is a perfectly valid PNG of the *wrong* content (see
@@ -185,8 +223,57 @@ result = tl.SetCurrentTimecode(start[:-2] + {format(offset_frames, '02d')!r})
             expect(not client.fallbacks, f"native grab failed, community served it: {client.fallbacks}")
             return f"{len(first)} byte PNG, follows the playhead"
 
+        async def frame_image():
+            r = await select_media_timeline()
+            expect(r["timeline"] == MEDIA_TIMELINE, r)
+            if not await client._native_has("get_image"):
+                raise Skip("the vendor get_image tool needs Resolve 21.2 or later")
+            # same proof as grab_still, by timecode instead of playhead: A != B, and A == A
+            at = lambda frames: r["start"][:-2] + format(frames, "02d")
+            (mime, first), (_, moved), (_, back) = [await client.frame_image(at(f)) for f in (0, 20, 0)]
+            expect(mime in ("image/jpeg", "image/png") and first, f"no image ({mime}, {len(first)} bytes)")
+            expect(first != moved, "frame did not change 20 frames later -- stale image")
+            expect(first == back, "same frame rendered twice differs")
+            expect(not client.fallbacks, f"native failed, community served it: {client.fallbacks}")
+            return f"{len(first)} byte {mime}, follows the timecode"
+
+        async def effect_roundtrip():
+            r = await select_media_timeline()
+            expect(r["timeline"] == MEDIA_TIMELINE, r)
+            probe = await client.run_script(
+                f"""
+tl = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline()
+item = tl.GetItemListInTrack("video", 1)[0]
+listed = resolve.GetEffectsList("video") if hasattr(resolve, "GetEffectsList") else None
+result = {{"api": listed is not None,
+          "known": bool(listed) and any(e.get("id") == {TEST_EFFECT_ID!r} for e in listed),
+          "ofx": len(item.GetEffects("ofx") or []) if listed is not None else None}}
+"""
+            )
+            if not probe["api"]:
+                raise Skip("TimelineItem.AddEffect / Resolve.GetEffectsList need Resolve 21.2 or later")
+            expect(probe["known"], f"{TEST_EFFECT_ID} not in Resolve.GetEffectsList('video')")
+            expect(probe["ofx"] == 0, f"fixture clip already carries {probe['ofx']} OFX effect(s) -- not touching it")
+            base, again = await client.export_frame(10), await client.export_frame(10)
+            expect(base.startswith(PNG_MAGIC) and base == again, "ExportFrame is not a stable PNG")
+            item = 'resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline().GetItemListInTrack("video", 1)[0]'
+            try:
+                added = await client.run_script(f"result = bool({item}.AddEffect('ofx', {TEST_EFFECT_ID!r}))")
+                expect(added, "AddEffect returned None")
+                graded = await client.export_frame(10)
+                expect(graded != base, "frame unchanged with the effect applied")
+            finally:
+                # removes only the effect this check added (the clip had none before)
+                await client.run_script(
+                    f"it = {item}\nfx = [e for e in it.GetEffects('ofx') or [] if (e.GetInfo() or {{}}).get('id') == {TEST_EFFECT_ID!r}]\n"
+                    "result = it.DeleteEffects(fx) if fx else True"
+                )
+            restored = await client.export_frame(10)
+            expect(restored == base, "frame differs after DeleteEffects")
+            return f"{len(base)} byte PNG: changed with {TEST_EFFECT_ID.rsplit('/', 1)[-1]}, identical after removal"
+
         async def render_ok():
-            # bench_tl_media is still current from the grab_still check
+            # bench_tl_media is still current from the grab_still and frame_image checks
             out = SCRATCH / "render"
             try:
                 r = await client.render(RENDER_PRESET, out, "validate_client_render", timeout_s=300)
@@ -205,6 +292,8 @@ result = tl.SetCurrentTimecode(start[:-2] + {format(offset_frames, '02d')!r})
         await check("project name with quotes", quoted_project_name)
         await check("import_media (real clip, twice)", import_real_clip)
         await check("grab_still (native first)", grab_still)
+        await check("frame_image (native get_image)", frame_image)
+        await check("AddEffect + ExportFrame round trip", effect_roundtrip)
         await check("render + loudness gate", render_ok)
         await check("NEG render outside volume raises", lambda: must_raise(
             "render", lambda: client.render(RENDER_PRESET, "/tmp/mcp-bench-render", "nope")))
@@ -213,7 +302,8 @@ result = tl.SetCurrentTimecode(start[:-2] + {format(offset_frames, '02d')!r})
         await check("reselect bench_tl", select_fixture_timeline)
         await check(
             "NEG rename count mismatch raises",
-            lambda: must_raise("rename_clips", lambda: client.rename_clips(["only one"])),
+            # only meaningful on bench_tl (8 clips): on a one-clip timeline this rename would succeed
+            lambda: on_fixture_timeline(lambda: must_raise("rename_clips", lambda: client.rename_clips(["only one"]))),
         )
         await check(
             "NEG missing track raises",
@@ -229,13 +319,14 @@ result = tl.SetCurrentTimecode(start[:-2] + {format(offset_frames, '02d')!r})
         )
 
     print(f"\n{'check':<36} {'ok':<5} detail")
-    all_ok = True
-    for label, ok, preview in checks:
-        all_ok &= ok
-        print(f"{label:<36} {'OK' if ok else 'FAIL':<5} {preview}")
+    for label, status, preview in checks:
+        print(f"{label:<36} {status:<5} {preview}")
 
-    print("\nALL CHECKS PASSED" if all_ok else "\nSOME CHECKS FAILED")
-    return 0 if all_ok else 1
+    failed = sum(status == "FAIL" for _, status, _ in checks)
+    skipped = sum(status == "SKIP" for _, status, _ in checks)
+    note = f" ({skipped} skipped)" if skipped else ""
+    print(f"\nALL CHECKS PASSED{note}" if not failed else f"\nSOME CHECKS FAILED ({failed}){note}")
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":

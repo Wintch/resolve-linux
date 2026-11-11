@@ -7,8 +7,8 @@ catalog it was tested against is [../../MCP-CAPABILITIES.md](../../MCP-CAPABILIT
 
 The two servers:
 
-- **native**: `/opt/resolve/bin/ResolveMCP`, bundled with Resolve Studio 21.1+. 14 tools,
-  code-execution model: you send Python to `run_script`.
+- **native**: `/opt/resolve/bin/ResolveMCP`, bundled with Resolve Studio 21.1+. 18 tools on 21.2
+  (14 on 21.1.1), code-execution model: you send Python to `run_script` (sandboxed Python 3.14).
 - **community**: [`samuelgursky/davinci-resolve-mcp`](https://github.com/samuelgursky/davinci-resolve-mcp),
   a separate checkout (default `~/resolve-install/davinci-resolve-mcp`, override with
   `RESOLVE_MCP_COMMUNITY_REPO`). 37 compound tools with typed `action=` values, no
@@ -22,8 +22,8 @@ The two servers:
 | `resolve_xvfb_stdio.py` | Starts Resolve **with its GUI inside a private Xvfb** and runs an MCP server against it; shared and reference-counted between several servers. |
 | `resolve_headless_stdio.py` | Shim around the community checkout's `scripts/resolve_headless.py run` that keeps its status lines off stdout (the MCP channel). |
 | `mcp_filter.py` | Stdio filter that hides and refuses chosen tools (used to remove the vendor's `run_script_unsafe`). Fails closed: batches, non-JSON lines and malformed calls never reach the server. |
-| `resolve_client.py` | `ResolveClient`: native-first, raising, timeout-guarded client over both servers (`import_media`, `grab_still`, `render()` with a loudness gate). |
-| `validate_client.py` | Live end-to-end test of `resolve_client.py` (17 checks, asserts on returned values, ends with negative checks). Under `-nogui`, 16 pass (`grab_still` needs the Color page). Under the `xvfb` backend the run is not reliable yet: after `grab_still` switches to the Color page, later `LoadRenderPreset` and `SetCurrentTimeline` calls fail. |
+| `resolve_client.py` | `ResolveClient`: native-first, raising, timeout-guarded client over both servers (`import_media`, `grab_still`, `export_frame`, `frame_image`, `render()` with a loudness gate). |
+| `validate_client.py` | Live end-to-end test of `resolve_client.py` (19 checks, asserts on returned values, ends with negative checks). Each check reports `OK`, `FAIL` or `SKIP` (cannot run in this setup, not a failure): `grab_still` is skipped under `-nogui` (no Color page; detected from the running Resolve's command line in `/proc`), `frame_image` and the `AddEffect` + `ExportFrame` round trip are skipped before 21.2. On 21.2 under `-nogui` all checks pass, 1 skipped. Under the `xvfb` backend it is not reliable: `grab_still` opens the Color page, which aborts Resolve there (see [Backends](#backends)), and every later call returns `None`. |
 | `setup_bench_project.py` | Idempotent fixture: project `MCP-Benchmark`, timeline `bench_tl` with 8 "Solid Color" generator clips. |
 | `bench_lib.py` | Shared stdio-client helpers for both servers, `resolve_env()`, the fixture guard, timing records. |
 | `bench_01_simple.py`, `bench_02_batch_rename.py`, `bench_03_subtitles.py` | Native-vs-community timing benchmarks; bench_03 also exercises `CreateSubtitlesFromAudio`. Raw timings go to `*_results.jsonl` next to the script (local output). |
@@ -86,18 +86,29 @@ display/cookie mismatch, not the External scripting preference.
 |---|---|---|---|
 | `native` | vendor `ResolveMCP` | one already open | someone at the desktop |
 | `community` | community `src/server.py` | one already open | someone at the desktop |
-| `headless` | community, via `resolve_headless_stdio.py` | `-nogui`, started and stopped by the backend (`guard`/`start`/`run`/`stop`) | unattended caller; edits and renders, no pages, a raised dialog blocks the call |
-| `xvfb` | community, via `resolve_xvfb_stdio.py` | full GUI in a private Xvfb | unattended caller that needs renders |
+| `headless` | community, via `resolve_headless_stdio.py` | `-nogui`, started and stopped by the backend (`guard`/`start`/`run`/`stop`) | unattended caller (recommended on 21.2); edits and renders; no pages, a raised dialog blocks the call. On 21.2 the same `-nogui` Resolve also gives graded frames to the vendor server / `ResolveClient` (`Timeline.ExportFrame` via `run_script`, `get_image`) |
+| `xvfb` | community, via `resolve_xvfb_stdio.py` | full GUI in a private Xvfb | unattended caller that needs a GUI page other than Color (opening Color aborts Resolve here) |
 | `native-xvfb` | vendor, through `mcp_filter.py --block run_script_unsafe` | the same Xvfb session as `xvfb` | unattended caller, vendor tools without the shell |
 
-**Why Xvfb.** `-nogui` has no pages (`OpenPage("color")` leaves the page unchanged, so
-`GrabStill` fails) and cannot show a dialog it raises: the call that triggered it never returns.
+**Why Xvfb.** `-nogui` has no pages (`OpenPage("color")` leaves the page unchanged) and cannot show a dialog it raises: the call that triggered it never returns.
 A missing render `TargetDir` is enough ("Render Path Inaccessible"), which is the likely cause of
 render calls that hang under `-nogui`; with the directory in place, `load_preset`, `set_settings`,
 `add_job` and `start` complete there too. Started with its normal GUI inside `Xvfb :99 -screen 0 1920x1080x24 +extension GLX
 +render -noreset` (nothing appears on any desktop), Resolve answers the scripting API the same
 way and the render queue works: a 64 s 1080p clip renders to H.264 in ~4 s through the API and
 ~5 s through the community MCP. Cold start to the first MCP answer: 8-10 s.
+
+**But not the Color page.** Xvfb only has software GL, and Resolve's CUDA-OpenGL interop fails
+on it: opening the Color page logs `Failed to register OpenGL object for CUDA interop:
+cudaErrorUnknown` and `Packer OpenGL interop failed`, then Resolve aborts and every later API
+call returns `None` (same on 21.1.1 and 21.2). On 21.2 the reason to want pages for frames is
+gone: `Timeline.ExportFrame` and the vendor `get_image` return graded frames under `-nogui`.
+Rendering through the community MCP (`mcp_render_flow.py`: create project, import, timeline,
+`load_preset` "H.264 Master", `set_settings`, `add_job`, `start`) works on 21.2 with both
+backends and writes H.264 + PCM; under `xvfb` its final `project_manager delete` of the current
+project can fail (`DeleteProject` returns `False`) and leave the `zz_mcp_render_test` project
+behind, under `headless` it succeeds. So on 21.2 use `headless` (`-nogui`) for unattended
+callers, and keep `xvfb` only for work that needs a visible GUI page other than Color.
 
 **`resolve_xvfb_stdio.py`** lets a client keep both servers connected at once: every instance
 registers in a clients directory under `/tmp`; the first one starts Xvfb (`RESOLVE_XVFB_DISPLAY`,
@@ -110,8 +121,8 @@ stderr: stdout is the JSON-RPC channel.
 **`run_script_unsafe` is a shell.** Its own description: "full system access (filesystem,
 network, subprocess)". When the servers are reached through an MCP-only SSH key (a forced
 command, no shell), exposing it would hand out the machine, so `native-xvfb` puts
-`mcp_filter.py` between the server and the client: the tool disappears from `tools/list` (13
-left) and a `tools/call` for it is answered with an error, never forwarded. The filter runs on
+`mcp_filter.py` between the server and the client: the tool disappears from `tools/list` (17
+left on 21.2) and a `tools/call` for it is answered with an error, never forwarded. The filter runs on
 the server side of the key, so the client cannot turn it off. `mcp_filter_test.py <command>`
 checks it. Override the blocked list with `RESOLVE_MCP_NATIVE_BLOCK`.
 
@@ -123,8 +134,8 @@ fd 1 to the server.
 **`restart_app`.** Upstream relaunches Resolve on Linux with no arguments, which silently
 drops `-nogui`: the restarted instance is a GUI one and `resolve_headless.py status` reports
 `headless: False`. `patches/app_control-headless-restart.patch` adds `-nogui`. Under the `xvfb`
-backends that patched relaunch would come back without a render queue: avoid `restart_app`
-there (not tested).
+backends that patched relaunch would come back as a `-nogui` instance instead of the GUI inside Xvfb: avoid
+`restart_app` there (not tested).
 
 ## Liveness and recovery
 
@@ -176,7 +187,7 @@ The two designs are different trade-offs, not a bigger and a smaller version of 
 | | native | community |
 |---|---|---|
 | Model | `run_script` (sandbox: no `os`, files, network, processes; `resolve` and `project` pre-injected) and `run_script_unsafe` (same, full system access) | typed actions, `safe_*`/dry-run/risk layer, typed error envelopes with `remediation` |
-| Extras | live `.pyi` stubs and docs (incl. Fusion UI Manager), `get_whats_new`, `generate_lut` (evaluates a Python transform per lattice point) | transcription, visual similarity, beat detection (optional AI extras), offline `.drp`/`.drt`/`.drx` work through its Node server |
+| Extras | live `.pyi` stubs and docs (incl. Fusion UI Manager), `get_whats_new`, `generate_lut` (evaluates a Python transform per lattice point); on 21.2 also `describe_grade`, `get_image`, `get_thumbnails`, `list_extras_packages`/`install_extras_package` | transcription, visual similarity, beat detection (optional AI extras), offline `.drp`/`.drt`/`.drx` work through its Node server |
 | Needs | Resolve running | Resolve running (except the offline Node server) |
 
 `ResolveClient` routes **native first**: lookups come from one native round trip
@@ -200,12 +211,26 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
 - `grab_still()` is native-only (`Timeline.GrabStill` + `GalleryStillAlbum.ExportStills`, the PNG
   read back and the still deleted) and waits `STILL_SETTLE_S` (0.5 s held at 1080p; nothing in
   the API signals readiness, a heavier grade or 4K may need more) between grab and export.
+- `export_frame(frame_offset, image_format='png', max_dimension=0)` (21.2+): bytes of the current
+  timeline's graded frame (offset 0-based from the timeline start) through `Timeline.ExportFrame`
+  in `run_script`. Full-resolution PNG by default: lossless and byte-identical for the same frame
+  and grade, so it proves a grade or effect change like `grab_still`, but needs no GUI (works
+  under `-nogui`) and leaves the playhead alone.
+- `frame_image(timecode, source='timeline', max_dimension=None)` (21.2+): `(mime, bytes)` from the
+  vendor `get_image` tool. A JPEG downscaled to 1024 px unless `max_dimension` is raised: good for
+  looking at a frame or telling frames apart, too lossy for small grade diffs.
+- `delete_lut()` calls the vendor `delete_lut_file` when the server lists it (21.2) and
+  `delete_lut` otherwise (21.1).
 - `render()`: refuses a target outside a Media Storage volume before queueing, raises on a
   silent `AddRenderJob` `None`, polls with a deadline (then `StopRendering`), only touches its
   own job, accepts only files written by this render, verifies with `ffprobe` and runs
   `audio_loudness_check` on the deliverable.
 - `bench_lib._session` unwraps the MCP SDK's nested `ExceptionGroup`s so one failure is one
   line. Server stderr is dropped unless `RESOLVE_MCP_DEBUG=1`.
+- `validate_client.py` guards its own mutations: the NEG rename-count check refuses to run unless
+  `bench_tl` is the current timeline (on a one-clip timeline the rename would succeed and mutate
+  it), and the `AddEffect` + `ExportFrame` round trip refuses if the fixture clip already has OFX
+  effects and removes only the effect it added.
 
 ## Behaviors worth knowing
 
@@ -229,13 +254,13 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   `TIMELINE_NOT_FOUND`, `TIMELINE_SELECTOR_MISMATCH`, `ITEM_NOT_FOUND` errors carry
   `isError: true`; unknown keys come back in `ignored_params`; `timeline_item_id`
   (`GetUniqueId()`) is the stable item selector, because on 21.1 `item_index` counts
-  transitions (an unknown id returns `ITEM_NOT_FOUND`); `duplicate` keeps the original current
+  transitions (an unknown id returns `ITEM_NOT_FOUND`; lookup verified on 21.2 too); `duplicate` keeps the original current
   unless `make_current: true`.
 - FCPXML export writes a bundle directory (`<name>.fcpxml/Info.fcpxml`);
   `timeline probe_interchange_roundtrip` (format `fcpxml`) exports it, re-imports it and compares:
-  structure matches, generator clips come back offline.
+  structure matches, generator clips come back offline (on 21.2: match, 0 differences).
 - `graph apply_grade_from_drx` with `source: "timeline"` refuses a `.drx` without a timeline grade
-  (`<pTrackVer>`) with `DRX_NO_TIMELINE_GRADE` instead of emptying the timeline graph.
+  (`<pTrackVer>`) with `DRX_NO_TIMELINE_GRADE` instead of emptying the timeline graph (verified on 21.2).
 - Since v5.0 the server refuses caller-chosen commands and binaries: `apply_spec` no longer runs
   spec hooks (`SPEC_HOOKS_NOT_RUN`), the advanced server rejects binary overrides
   (`BINARY_OVERRIDE_REFUSED`), and media paths starting with `-` are refused
@@ -278,9 +303,14 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   tests need a real imported clip. `validate_client.py` generates a DNxHR/PCM test clip under
   `~/Videos/mcp-bench-scratch`.
 - `Timeline.GetNodeGraph()` is a timeline-level graph, distinct from each clip's. `Graph` has no
-  `AddNode`/`AddTool`: a new OFX node only arrives through `ApplyGradeFromDRX` with a
-  pre-authored `.drx`. `GetToolsInNode()` keeps listing a disabled node's tool and there is no
-  `GetNodeEnabled()`; prove a grade change with a pixel diff of stills.
+  `AddNode`/`AddTool`: a new OFX node in the color graph only arrives through `ApplyGradeFromDRX` with a
+  pre-authored `.drx` (21.2's `TimelineItem.AddEffect`, below, adds an OFX effect to the clip instead). `GetToolsInNode()` keeps listing a disabled node's tool and before 21.2
+  there is no `GetNodeEnabled()`; prove a grade change with a pixel diff of stills (or, on 21.2,
+  of `Timeline.ExportFrame` PNGs).
+- 21.2 adds `TimelineItem.AddEffect(category, id)` (`'fusion'|'ofx'|'audio'`, ids from
+  `Resolve.GetEffectsList()`), `GetEffects(category)` and `DeleteEffects(list)`. Verified on the
+  fixture under `-nogui`: adding OFX Film Grain changes the `ExportFrame` PNG, and after
+  `DeleteEffects` it is byte-identical to the original again.
 - `GrabStill()` returns before the still's image exists; an immediate `ExportStills` writes
   stale content with no error.
 - `CreateSubtitlesFromAudio()` returns `False` on silent clips (correct); on synthesized speech

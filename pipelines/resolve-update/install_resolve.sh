@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Builds and installs a new Resolve .deb from a manually-downloaded .run installer via
-# makeresolvedeb, replacing the currently-installed build. Run preflight_backup.sh first so
-# rollback.sh has something to restore.
+# Builds and installs a new Resolve .deb from a .run installer via makeresolvedeb,
+# replacing the currently-installed build. Run preflight_backup.sh first so rollback.sh has
+# something to restore.
 #
-# The .run download can't be scripted: Blackmagic gates it behind a free-account login
-# (see the parent repo's README). Get it manually, then pass its path here.
+# Get the .run with download_resolve.sh (no account or registration data needed, runs as a
+# normal user), unzip it, then pass the .run's path here.
 #
 # Usage: MAKERESOLVEDEB=/path/to/makeresolvedeb_<ver>_multi.sh ./install_resolve.sh <file.run>
 #

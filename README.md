@@ -29,7 +29,7 @@ each editing task covered, the aim is:
 ## Reference machine
 
 All measurements in this repo come from one machine: **RTX 3060 Ti 8 GB, Ryzen 5 5600X, 32 GB RAM, Debian 13,
-NVIDIA 595 driver (open kernel module)**, Resolve Studio 21.x installed with `makeresolvedeb`, editing media on a
+NVIDIA 595 driver (open kernel module)**, Resolve Studio 21.2 installed with `makeresolvedeb`, editing media on a
 SATA SSD and an NVMe drive. Numbers are for orientation; re-measure on other hardware.
 
 ## Install on Debian
@@ -38,16 +38,20 @@ Blackmagic only supports Rocky Linux 8.6 and ships no `.deb`.
 [makeresolvedeb](https://www.danieltufvesson.com/makeresolvedeb) converts the official `.run` installer into two
 Debian packages. Works in practice, not vendor-supported.
 
-**Download (the one step that cannot be scripted).** Blackmagic gates the Linux download behind a free-account login
-on [blackmagicdesign.com/support](https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion). Log in
-with the account tied to the Studio dongle and download **DaVinci Resolve Studio for Linux**, not Free (see
-[Codecs on Linux](#codecs-on-linux) for why Studio matters).
+**Download (no account needed).** The Linux `.run` comes from
+[blackmagicdesign.com/support](https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion) through the
+site's "download only" request: no account and no personal data. Get **DaVinci Resolve Studio for Linux**, not Free
+(see [Codecs on Linux](#codecs-on-linux) for why Studio matters).
+[`pipelines/resolve-update/download_resolve.sh`](pipelines/resolve-update/download_resolve.sh) makes the same request
+from the command line (`--studio` by default, `--free`, `--version X.Y[.Z]`, `--list`, `--dry-run`, optional
+`DEST_DIR`); it resumes an interrupted download and refuses to start with less free space than twice the `.zip`.
 
 ```bash
+pipelines/resolve-update/download_resolve.sh    # Studio, newest Linux release, ~11.5 GB .zip
 unzip DaVinci_Resolve_Studio_*_Linux.zip        # the .run + an install-instructions HTML
 cp /path/to/makeresolvedeb_*.sh .               # must be in the SAME directory as the .run
-./makeresolvedeb_*.sh DaVinci_Resolve_Studio_*_Linux.run
-sudo dpkg -i davinci-resolve-studio_*.deb davinci-resolve-studio-data_*.deb   # both packages
+./makeresolvedeb_*.sh DaVinci_Resolve_Studio_*_Linux.run   # as a normal user, not root
+sudo apt install ./davinci-resolve-studio_*.deb ./davinci-resolve-studio-data_*.deb   # both packages
 sudo apt install -y libglu1-mesa                # libGLU.so.1 is NOT optional
 ```
 
@@ -55,12 +59,15 @@ Gotchas:
 
 - **`makeresolvedeb` refuses a `.run` outside its working directory**, even by absolute path ("does not exist or is
   located outside the working directory"). Copy the script next to the `.run`.
+- **`makeresolvedeb` builds as a normal user**: it packs with `fakeroot` + `dpkg-deb` and warns when run as root. Only
+  the `apt install` of the two packages needs root.
 - **`libGLU.so.1` (`libglu1-mesa`) is required and undocumented**: without it the binary fails at load time with
   "error while loading shared libraries".
 - **Disk space**: the script `cp -rp`s the unpacked payload into each package tree. Budget 2-3× the `.run` size of
   scratch space (an 11 GB `.run` unpacks to ~14 GB, then is copied again). The `.zip` can be deleted right after
   `unzip`.
-- **The two packages**: `davinci-resolve-studio` (~2.9 GB) is the program; `davinci-resolve-studio-data` (~5 GB) is
+- **The two packages**: `davinci-resolve-studio` (~3.2 GB for 21.2) is the program; `davinci-resolve-studio-data`
+  (~5.1 GB) is
   LUTs, Fusion/Fairlight templates and presets. Both are required.
 - **Only one `.deb` set in the build directory**: stale packages from earlier builds lead to mixed-version installs.
   `pipelines/resolve-update/install_resolve.sh` checks for this.
@@ -126,7 +133,8 @@ aborts at launch ("Authorization required, but no authorization protocol specifi
 every login) and the display number is not always `:0`: take `DISPLAY` from the Xwayland process that owns the cookie,
 or an `Invalid MIT-MAGIC-COOKIE-1 key` makes Resolve exit during Qt init and the client only sees a timeout.
 `pipelines/mcp-benchmark/bench_lib.resolve_env()` and `resolve_mcp_wrapper.sh` do this. Running Resolve in a private
-`Xvfb` display avoids the question entirely (see [Scripting API and MCP](#scripting-api-and-mcp)).
+`Xvfb` display avoids the question too, except that opening the Color page there aborts Resolve; `-nogui` avoids it
+as well (see [Scripting API and MCP](#scripting-api-and-mcp)).
 
 ## Codecs on Linux
 
@@ -171,15 +179,15 @@ From Blackmagic's "Supported Formats and Codecs" (Rocky Linux table), confirmed 
 | `dvr.scriptapp('Resolve')` blocks forever while the GUI is in a playback loop | stop playback first; put a timeout on every connection |
 | Imports and render output must be inside a registered **Media Storage** volume | register the directory first; outside it, `ImportMedia` returns `[]` silently and a render pops a blocking "Render Path Inaccessible" dialog |
 | A queued render job keeps pointing at its directory; deleting that directory later breaks the queue with "Render Path Inaccessible" | delete only the output file, or `DeleteRenderJob` first |
-| No scripting method adds an OFX/ResolveFX effect (Film Grain, Super Scale, Speed Warp, Noise Reduction) or a new node | GUI, or a pre-built `.drx` via `Graph.ApplyGradeFromDRX` |
+| Up to 21.1.x, no scripting method adds an OFX/ResolveFX effect (Film Grain, Noise Reduction, ...); no version adds a new color node; Super Scale and Speed Warp have no dedicated method | 21.2: `TimelineItem.AddEffect('ofx', id)` with ids from `Resolve.GetEffectsList()` adds a clip effect (verified with Film Grain; other effects untested). New nodes, older builds, Super Scale and Speed Warp: GUI or a pre-built `.drx` via `Graph.ApplyGradeFromDRX` |
 | `CreateMagicMask()` does nothing without clicks on the subject | a person clicks in the Magic Mask palette once; `RegenerateMagicMask()` works afterwards |
 | A failed or interrupted render does not recover cleanly: silent `None` returns, GUI dialogs block calls, `Quit()` hangs on its save dialog | treat an unexpected `None` as a blocked dialog; kill and relaunch; `ResolveClient.render()` wraps this |
-| A `-nogui` instance cannot show a dialog but still raises it, and the call never returns (a missing render `TargetDir`, `SaveProject` on a never-saved project) | create the output directory first and guard saves; run the GUI inside a private `Xvfb` display when a dialog has to be seen and dismissed |
+| A `-nogui` instance has no pages (no Color page, so no `GrabStill`); it cannot show a dialog but still raises it, and the call never returns (a missing render `TargetDir`, `SaveProject` on a never-saved project) | frames: on 21.2, `Timeline.ExportFrame` (lossless PNG) or the vendor `get_image` tool, no GUI needed; dialogs: create the output directory first and guard saves; run the GUI inside a private `Xvfb` display when a dialog has to be seen and dismissed |
+| In a private `Xvfb` display, opening the Color page aborts Resolve: CUDA-OpenGL interop fails on Xvfb's software GL, and every later API call returns `None` | use `-nogui` and `ExportFrame`/`get_image` there instead of opening the Color page |
 | VRAM below the 16 GB AI-tool / 12 GB background-render minimums on 8 GB cards | hardware ceiling; stop other GPU workloads first |
 | Single-seat Studio license: no second Resolve to view a Remote Monitor stream on another desktop | the free iOS/Android Remote Monitor app, or a desktop stream/VNC |
 | NDI not built in | paid third-party plugin (Nobe Display) |
 | Third-party OFX Linux support is vendor-specific | check per vendor ([Plugins](#plugins-on-linux)) |
-| Login-gated download | manual, once per version |
 | Only Rocky Linux 8.6 is supported | makeresolvedeb on Debian/Ubuntu |
 
 ## Scripting API and MCP
@@ -197,11 +205,11 @@ export PYTHONPATH="$PYTHONPATH:$RESOLVE_SCRIPT_API/Modules/"
 
 | | Vendor `ResolveMCP` (`/opt/resolve/bin/ResolveMCP`, Studio 21.1+) | Community [samuelgursky/davinci-resolve-mcp](https://github.com/samuelgursky/davinci-resolve-mcp) |
 |---|---|---|
-| Tools | 14; `ResolveMCP --dump-tools` prints them | 37 compound tools, ~720 `action=` values; `--full` gives one tool per API method; an optional Node server edits `.drp/.drt/.drx` files offline |
+| Tools | 18 on 21.2 (14 on 21.1); `ResolveMCP --dump-tools` prints them | 37 compound tools, ~720 `action=` values; `--full` gives one tool per API method; an optional Node server edits `.drp/.drt/.drx` files offline |
 | Model | send Python to `run_script` (sandboxed: no files, network, processes); `run_script_unsafe` has full system access | typed actions, safety layer (dry-run, risk ratings, typed errors), no caller-supplied code |
 | Extras | API stubs and docs from the installed build (including the Fusion UI Manager API), `generate_lut` builds a `.cube` from a Python function | optional ML extras (whisper, librosa, open_clip, transformers, opencv, numpy) for transcription, beat detection, similarity |
 
-Public coverage of 21.1 claimed "~88 tools" for the vendor server; the shipped binary has 14 and a different design.
+Public coverage of 21.1 claimed "~88 tools" for the vendor server; the shipped 21.1 binary has 14 and a different design.
 Full catalogs: [MCP-CAPABILITIES.md](MCP-CAPABILITIES.md). The repo-root [`.mcp.json`](.mcp.json) registers both
 servers (`resolve-native`, `resolve-community`) through
 [`resolve_mcp_wrapper.sh`](pipelines/mcp-benchmark/resolve_mcp_wrapper.sh), which resolves `DISPLAY`/`XAUTHORITY`
@@ -216,10 +224,12 @@ measurement: the same native rename takes ~73 ms on Edit/Color and ~166 ms on De
 point for scripted work: native first, community only as a recorded fallback (`client.fallbacks`), every method raises
 `ResolveError` and returns parsed data, every call has a timeout, values are interpolated with `repr()`. It encodes the
 import, still and render gotchas below as code, and `render()` gates the deliverable with an ffprobe check and a
-loudness check. [`validate_client.py`](pipelines/mcp-benchmark/validate_client.py) is its live test (17 checks against
-the disposable `MCP-Benchmark` project only, including negative checks that failures are loud). Under `-nogui`
-16 pass: `grab_still` needs the Color page, and `OpenPage("color")` does not switch pages without a GUI. Details and every
-harness: [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
+loudness check. On 21.2 it also returns frames without a GUI: `export_frame()` (`Timeline.ExportFrame`, PNG) and
+`frame_image()` (the vendor `get_image` tool). [`validate_client.py`](pipelines/mcp-benchmark/validate_client.py) is
+its live test (19 checks against the disposable `MCP-Benchmark` project only, including negative checks that failures
+are loud); each reports OK, FAIL or SKIP, and a check that cannot run in the current setup is skipped, not failed.
+Under `-nogui` on 21.2 all pass with `grab_still` skipped: it needs the Color page, and `OpenPage("color")` does not
+switch pages without a GUI. Details and every harness: [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
 
 ### Headless and virtual-display operation
 
@@ -227,11 +237,15 @@ For callers with nobody at the machine (an agent over SSH, an MCP client on anot
 
 - **`-nogui`** (`resolve_headless.py` from the community repo) boots in ~6-10 s and supports timeline edits,
   transforms, imports and the render queue (a full render through the community MCP writes a valid H.264 file).
-  It has no pages (no Color page, so no `GrabStill`), and any dialog it raises blocks the call for good.
+  It has no pages (no Color page, so no `GrabStill`), and any dialog it raises blocks the call for good. On 21.2 it
+  also covers frames (`Timeline.ExportFrame`, the vendor `get_image` tool) and effects (`TimelineItem.AddEffect`).
 - **GUI inside a private `Xvfb`** (`Xvfb :99 -screen 0 1920x1080x24 +extension GLX +render -noreset`, then
   `DISPLAY=:99 /opt/resolve/bin/resolve`, no `-nogui`) answers the API the same way, has real pages, and renders: a 64 s 1080p clip
   rendered to H.264 in ~4-5 s, through the API and through the community MCP. `resolve_xvfb_stdio.py` lets both servers
   share one such session (first in starts it, last out quits it, never touches a Resolve on another display).
+  **Do not open the Color page there**: CUDA-OpenGL interop fails on Xvfb's software GL (`Failed to register OpenGL
+  object for CUDA interop: cudaErrorUnknown`, `Packer OpenGL interop failed`), Resolve aborts, and every later API call
+  returns `None`. Use `-nogui` with `ExportFrame`/`get_image` for frames instead.
 - `run_script_unsafe` is a shell. Behind a restricted SSH key, put the vendor server behind
   [`mcp_filter.py`](pipelines/mcp-benchmark/mcp_filter.py), which hides it from `tools/list` and refuses calls to it.
 
@@ -263,7 +277,7 @@ Found by driving real projects; each costs time because the failure is silent.
 - **`Timeline.GetNodeGraph()` is the timeline-level grade**, separate from each clip's graph. Proving a toggle changed
   the image needs an exact per-pixel diff of stills: a low grain amount moves ~0.16 % of pixels by one luma level,
   invisible to a whole-frame average.
-- **`GetToolsInNode()` lists tools on bypassed nodes too**, there is no `GetNodeEnabled()`, and it returns a generic
+- **`GetToolsInNode()` lists tools on bypassed nodes too**, there is no `GetNodeEnabled()` before 21.2, and it returns a generic
   name: AI Ultra NR and Temporal NR both read `"Noise Reduction"`. No OFX parameter read-back exists.
 - **`Stabilize()` on an already-stabilized clip is a fast no-op**; `SmartReframe()` re-analyses every call.
 - **`CreateSubtitlesFromAudio()` returns False on silent clips** (correct, not a no-op).
@@ -343,7 +357,7 @@ survey.
 |---|---|
 | [mcp-benchmark/](pipelines/mcp-benchmark/) | the automation layer: `ResolveClient`, its live test, native-vs-community benchmarks, the `-nogui`/Xvfb launchers, `mcp_filter.py`, `resolve_mcp_wrapper.sh` (what `.mcp.json` points at), loudness gate, pixel-diff grade check |
 | [prepare-for-resolve/](pipelines/prepare-for-resolve/) | normalizes a folder of footage before import: AAC → PCM, VFR → nearest standard constant rate, interlacing, unsupported codecs; prefers NVENC and warns when it falls back to CPU |
-| [resolve-update/](pipelines/resolve-update/) | updating Resolve with makeresolvedeb, with a rollback path: repacked `.deb`s of the working build (`dpkg-repack`) and a project/config snapshot |
+| [resolve-update/](pipelines/resolve-update/) | downloading the Linux installer (no account) and updating Resolve with makeresolvedeb, with a rollback path: repacked `.deb`s of the working build (`dpkg-repack`) and a project/config snapshot |
 | [resolve-backup/](pipelines/resolve-backup/) | on-demand snapshot of Resolve's Disk Database projects and user config (Fusion, Fairlight), timestamped, outside git |
 | [resolve-power/](pipelines/resolve-power/) | holds CPU/GPU at full performance while Resolve runs and restores afterwards; can pause a named systemd power service meanwhile (`--pause-unit`); `--adaptive` goes full only while the timeline has heavy effects or a render is running |
 | [effect-benchmark/](pipelines/effect-benchmark/) | per-effect and per-delivery-preset timing with GPU sampling from a subprocess, one JSON line per run |
@@ -356,8 +370,8 @@ Run the Python tools with the community MCP checkout's venv, or a venv built fro
 - **Multicam AI auto-edit** (speaker detection across synced angles): a guide for doing it in Resolve, and how much of
   it the scripting API exposes.
 - **Pre-conforming mismatched sources** (resolution, aspect, frame rate) to a target timeline in `prepare-for-resolve`.
-- **Separate benchmarks for AI Ultra NR vs Temporal NR**: neither has a scripting method, so each has to be applied by
-  hand on its own test clip.
+- **Separate benchmarks for AI Ultra NR vs Temporal NR**: neither has a scripting method before 21.2 (whether 21.2's
+  `TimelineItem.AddEffect` takes them is untested), so each has to be applied by hand on its own test clip.
 
 ## License
 

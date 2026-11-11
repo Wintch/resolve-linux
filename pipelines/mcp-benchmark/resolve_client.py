@@ -51,10 +51,11 @@ import subprocess
 import tempfile
 import time
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from pathlib import Path
 
 import audio_loudness_check
-from bench_lib import community_session, native_session, timed_call
+from bench_lib import _flatten_text, community_session, native_session, timed_call
 
 # native's run_script: default 10s, hard max 60s (from its own tool schema)
 SCRIPT_TIMEOUT_S = 10
@@ -82,6 +83,7 @@ class ResolveClient:
         self.default_project = default_project
         self._stack = None
         self.native = None
+        self._native_tools = None  # names, read once: the vendor server's tool set changes between releases
         self._community = None
         # (capability, why native failed) for every call community had to
         # serve. Native-first is a standing rule here, so a fallback is never
@@ -115,6 +117,23 @@ class ResolveClient:
         if r["is_error"]:
             raise ResolveError(f"{r['label']}: {r['result_text']}")
         return r["result_json"] if r["result_json"] is not None else r["result_text"]
+
+    async def _native_has(self, tool: str) -> bool:
+        if self._native_tools is None:
+            listed = await asyncio.wait_for(self.native.list_tools(), timeout=CLIENT_TIMEOUT_MARGIN_S)
+            self._native_tools = {t.name for t in listed.tools}
+        return tool in self._native_tools
+
+    async def _native_raw(self, tool: str, arguments: dict, timeout: float):
+        """Like _native, but returns the raw CallToolResult: timed_call keeps only the text
+        content, and image content (get_image, get_thumbnails) would be lost."""
+        try:
+            result = await self.native.call_tool(tool, arguments, read_timeout_seconds=timedelta(seconds=timeout))
+        except Exception as exc:
+            raise ResolveError(f"{tool}: {exc!r}") from None
+        if getattr(result, "isError", False):
+            raise ResolveError(f"{tool}: {_flatten_text(result.content)}")
+        return result
 
     async def run_script(self, script: str, unsafe: bool = False, timeout: int = SCRIPT_TIMEOUT_S, label: str = None):
         """Run `script` on native; returns whatever it assigned to `result`
@@ -372,7 +391,49 @@ result = {{"job_id": job_id, "timeline": tl.GetName()}}
         return await self._native("list_luts", {}, timeout=CLIENT_TIMEOUT_MARGIN_S)
 
     async def delete_lut(self, path: str):
-        return await self._native("delete_lut", {"path": path}, timeout=CLIENT_TIMEOUT_MARGIN_S)
+        # Resolve 21.2 renamed the vendor tool to delete_lut_file (a file name in the MCP LUT dir,
+        # .cube or .dctl); 21.1 has delete_lut with the same argument.
+        tool = "delete_lut_file" if await self._native_has("delete_lut_file") else "delete_lut"
+        return await self._native(tool, {"path": path}, timeout=CLIENT_TIMEOUT_MARGIN_S)
+
+    async def export_frame(self, frame_offset: int, image_format: str = "png", max_dimension: int = 0) -> bytes:
+        """Image bytes of the current timeline's frame at `frame_offset` (0-based from the
+        timeline start), graded, via Timeline.ExportFrame (Resolve 21.2+). PNG at full
+        resolution by default: lossless and byte-identical for the same frame and grade, so it
+        can prove a grade or effect change the way grab_still does, but it needs no Color page
+        (works under -nogui) and leaves the playhead alone."""
+        script = f"""
+tl = resolve.GetProjectManager().GetCurrentProject().GetCurrentTimeline()
+if tl is None:
+    raise RuntimeError("no current timeline")
+r = tl.ExportFrame({int(frame_offset)}, {{"encodedImageFormat": {image_format!r}, "maxDimension": {int(max_dimension)}}})
+if not r or not r.get("success") or not r.get("data"):
+    raise RuntimeError(f"Timeline.ExportFrame failed (needs Resolve 21.2 or later): {{(r or {{}}).get('error')!r}}")
+result = {{"data": r["data"], "width": r.get("width"), "height": r.get("height")}}
+"""
+        r = await self.run_script(script, timeout=SCRIPT_TIMEOUT_MAX_S, label=f"export_frame_{frame_offset}")
+        if not isinstance(r, dict) or not r.get("data"):
+            raise ResolveError(f"export_frame({frame_offset}): unexpected result {str(r)[:300]}")
+        return base64.b64decode(r["data"])
+
+    async def frame_image(self, timecode: str = None, source: str = "timeline", max_dimension: int = None):
+        """(mime type, bytes) of a rendered, graded, color-managed frame, via the vendor
+        get_image tool (Resolve 21.2+). Unlike grab_still it needs no Color page, so it works
+        under -nogui, and it does not move the playhead when `timecode` is given. The image is
+        a JPEG downscaled to 1024 px unless `max_dimension` is raised: good for looking at a
+        frame or telling frames apart, too lossy for the 1-level grade diffs grab_still proves."""
+        if not await self._native_has("get_image"):
+            raise ResolveError("frame_image needs the vendor get_image tool (Resolve 21.2 or later)")
+        args = {"source": source}
+        if timecode:
+            args["timecode"] = timecode
+        if max_dimension:
+            args["max_dimension"] = int(max_dimension)
+        result = await self._native_raw("get_image", args, timeout=SCRIPT_TIMEOUT_MAX_S)
+        images = [c for c in result.content if getattr(c, "type", None) == "image"]
+        if not images:
+            raise ResolveError(f"get_image returned no image: {_flatten_text(result.content)[:300]}")
+        return images[0].mimeType, base64.b64decode(images[0].data)
 
     # ---- Gallery stills: native first, community as fallback ----------------
     # native has no dedicated stills *tool*, which earlier got read as "native

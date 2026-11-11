@@ -6,8 +6,8 @@ samples `nvidia-smi` throughout each call, and appends one JSON-lines record per
 run to a results file, so results accumulate across runs.
 
 Effects that need a human first (Magic Mask needs clicks on the Color page before
-`CreateMagicMask()` will do anything; Film Grain and other OFX-only effects have no
-scripting-API entry point at all -- see README.md's "Known limitations on Linux") are still
+`CreateMagicMask()` will do anything; before 21.2, Film Grain and other OFX-only effects have no
+scripting-API entry point -- 21.2 adds TimelineItem.AddEffect, see README.md's "Known limitations on Linux") are still
 invoked so the *call itself* and its immediate return value are on record, but are expected to report `success: false` /
 `needs_hitl: true` rather than real GPU work -- don't read a `false` here as this tool being
 broken.

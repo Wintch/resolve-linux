@@ -4,7 +4,7 @@ Shared connection + timing helpers for benchmarking the two DaVinci Resolve
 MCP servers against each other:
 
   - "native"    -- /opt/resolve/bin/ResolveMCP, bundled with Resolve Studio
-                   21.1+. 14 tools, code-execution model (run_script against
+                   21.1+. 18 tools on 21.2 (14 on 21.1.1), code-execution model (run_script against
                    the full scripting API).
   - "community" -- samuelgursky/davinci-resolve-mcp, cloned to
                    ~/resolve-install/davinci-resolve-mcp. One MCP tool per

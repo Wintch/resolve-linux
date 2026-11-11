@@ -4,7 +4,8 @@ Resolve's changelog (`get_whats_new`, 21.0 through 21.0.4) lists new Scripting A
 calls. This file records which of them were exercised live, tested on Resolve Studio
 21.1.1 through the native MCP `run_script` (Linux, RTX 3060 Ti 8 GB). The 21.1 and 21.1.1
 additions (changelogs from the Blackmagic forum) were checked against the stubs and tested
-live too: see "21.1 / 21.1.1 additions" below.
+live too: see "21.1 / 21.1.1 additions" below. The 21.2 additions (from the stub diff) are
+listed in "21.2 additions", with the few that were tested live on Resolve Studio 21.2.
 
 Test project: throwaway `zz_scripting_api_test` (not one of the real projects).
 Fixtures, both inside a registered Media Storage volume (imports from outside one fail):
@@ -108,6 +109,56 @@ Re-tested after a clean relaunch: `GenerateSpeech` and `AnalyzeForSlate` turned 
 
 Side finding: `~/.local/share/DaVinciResolve/logs/mcp.log` was 552 MB. It logs every
 tool call in full, including large doc payloads.
+
+## 21.2 additions
+
+The stub `/opt/resolve/Developer/Scripting/DaVinciResolveScript.pyi` grows from 410
+methods (21.1) to 530 (21.2): **+120, none removed**. Added, by class:
+
+| Class | Added |
+|---|---|
+| `ColorGroup` (+1) | `GetPhotosInPhotoAlbum` |
+| `Effect` (+6) | `GetFusionComp`, `GetIndex`, `GetInfo`, `GetIsEnabled`, `SetIndex`, `SetIsEnabled` |
+| `Folder` (+1) | `GetParentFolder` |
+| `Graph` (+4) | `GetNodeColor`, `GetNodeEnabled`, `SetNodeColor`, `SetNodeLabel` |
+| `MediaPool` (+4) | `AddToPhotoAlbum`, `CreateEmptyPhotoAlbum`, `CreatePhotoAlbumFromPhotos`, `DeletePhotoAlbums` |
+| `MediaPoolItem` (+5) | `ExportFrame`, `ExportThumbnails`, `GetParentFolder`, `GetPhotoAlbum`, `SetTranscription` |
+| `PhotoAlbum` (+11) | `DeletePhotos`, `ExportThumbnails`, `GetCurrentItem`, `GetMediaPoolItem`, `GetName`, `GetNodeGraph`, `GetPhotoList`, `GetUniqueId`, `GrabAllStills`, `GrabStill`, `SetName` |
+| `PhotoAlbumItem` (+48) | Grading, versions, flags, Fusion, CDL and AutoColor methods mirroring `TimelineItem` (`AddEffect`, `ApplyAutoColor`, `GetCDL`, `SetCDL`, `ExportFrame`, `ExportLUT`, `CopyGrades`, `GetNodeGraph`, ...) |
+| `Project` (+13) | `GetAnalyzeForSlateStatus`, `GetCreateSubtitlesFromAudioStatus`, `GetCurrentPhotoAlbum`, `GetDetectSceneCutsStatus`, `GetPhotoAlbumByIndex`, `GetPhotoAlbumCount`, `GetPhotoQuickExportRenderPresets`, `GetRenderWithQuickExportStatus`, `GetSmartReframeStatus`, `GetTranscribeAudioStatus`, `RenderPhotosWithQuickExport`, `SetCurrentPhotoAlbum`, `SetPhotoRenderSettings` |
+| `Resolve` (+4) | `GetEffectsList`, `GetExtrasPackages`, `InstallExtrasPackage`, `UninstallExtrasPackage` |
+| `Timeline` (+6) | `DeleteGaps`, `ExportFrame`, `ExportThumbnails`, `GetIsEnabled`, `MoveItems`, `SetIsEnabled` |
+| `TimelineItem` (+17) | `AddEffect`, `AnalyzeAudioLevels`, `ApplyAutoColor`, `ClearAutoColor`, `CopyAttributes`, `DeleteEffects`, `ExportFrame`, `ExportThumbnails`, `GetAutoColorEnabled`, `GetCDL`, `GetEffects`, `GetPosition`, `RippleDeleteSilence`, `SetAutoColorEnabled`, `SetLeftOffset`, `SetPosition`, `SetRightOffset` |
+
+Signatures (from the stub) of the calls that were tested:
+
+- `Resolve.GetEffectsList(mediaType)`: `mediaType` is `'video'`, `'photo'` or `'audio'`;
+  returns a list of `{category, id, name}`.
+- `TimelineItem.AddEffect(category, id)`: `category` is `'fusion'`, `'ofx'` or `'audio'`;
+  returns an `Effect` or `None`.
+- `TimelineItem.GetEffects(category)` -> `list[Effect]`;
+  `TimelineItem.DeleteEffects(list[Effect])` -> `bool`.
+- `Timeline.ExportFrame(frameOffset, ExportFrameOptions)`: `frameOffset` is 0-based from
+  the timeline start; returns `{success, error, data, width, height}`, `data` being base64.
+- `ExportFrameOptions` fields: `outputType` `'file'` | `'encodedString'` (default
+  `encodedString`), `encodedImageFormat` `'jpg'` | `'png'` (default `jpg`), `filePath`,
+  `maxDimension` (0 = no scaling), `quality` 1-100 (jpg), and `roiX` / `roiY` /
+  `roiWidth` / `roiHeight` as fractions. Only `encodedImageFormat` `'png'` and `maxDimension` 0 were exercised;
+  the `file` output, `quality` and the `roi*` fields are untested.
+
+Live results on the reference machine (Resolve Studio 21.2.0.6, started with `-nogui`,
+MCP-Benchmark fixture project):
+
+| API | Result |
+|---|---|
+| `Resolve.GetEffectsList('video')` | Works. 130 video effects, categories `fusion` and `ofx`. |
+| `TimelineItem.AddEffect` / `GetEffects` / `DeleteEffects` | Work. `AddEffect('ofx', 'Resolve FX/Resolve FX Film Emulation/Film Grain')` returned an `Effect`. The exported frame changes with Film Grain applied and is byte-identical to the original again after `DeleteEffects`. |
+| `Timeline.ExportFrame(10, {encodedImageFormat: 'png'})` | Works without a GUI. Returned a 1920x1080 PNG as base64 (default `outputType` `encodedString`), byte-identical on repeat (deterministic). |
+| Everything else in the table above | Not tested on 21.2. |
+
+Several `Project` status getters in the 21.2 list (`GetAnalyzeForSlateStatus`, `GetDetectSceneCutsStatus`,
+`GetRenderWithQuickExportStatus`, `GetTranscribeAudioStatus`, `GetCreateSubtitlesFromAudioStatus`) already worked at
+runtime on 21.1.1 (see the tables above): 21.2 adds them to the stub, not to the API.
 
 ## Things that differ from the stubs
 
