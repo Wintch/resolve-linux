@@ -16,7 +16,8 @@
 #   headless     community server wrapped in its own scripts/resolve_headless.py: `guard` (refuse to start on
 #                top of an interactive session), `start` (boot -nogui, wait until scriptable), `run`, then
 #                `stop` (only if it started Resolve). For an unattended remote caller (an MCP client over SSH,
-#                nobody at the keyboard). -nogui cannot render: use xvfb when renders are needed.
+#                nobody at the keyboard). -nogui renders but has no pages and blocks on any dialog: use xvfb
+#                when a page (Color: stills) or a visible dialog is needed.
 #   xvfb         community server; Resolve runs WITH its GUI inside a private Xvfb (resolve_xvfb_stdio.py),
 #                which is what makes the render queue work
 #   native-xvfb  vendor server against that same Xvfb session, through mcp_filter.py (run_script_unsafe removed)

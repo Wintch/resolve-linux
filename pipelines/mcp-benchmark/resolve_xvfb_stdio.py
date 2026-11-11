@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """`resolve_headless.py run -- <cmd>`, but Resolve runs WITH its GUI inside a private Xvfb instead of `-nogui`.
 
-Why: under `-nogui` LoadRenderPreset returns False and render calls hang; with a GUI (here an invisible one) the
-render queue works (measured: 64 s of 1080p to H.264 in 4.2 s). A desktop session already on the machine is never touched.
+Why: `-nogui` has no pages (no Color page, so no GrabStill) and a dialog it raises blocks the call forever; with a GUI
+(here an invisible one) pages work, a modal can be captured and dismissed, and the render queue works (measured: 64 s of
+1080p to H.264 in 4.2 s). A desktop session already on the machine is never touched.
 
 An MCP client may keep TWO Resolve MCP servers connected at once (the vendor ResolveMCP and the community davinci-resolve-mcp),
 each started through this script, so the Resolve session is shared and counted:

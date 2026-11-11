@@ -11,7 +11,7 @@ the live tests run against this catalog; this file is just the map.
 
 ## Version
 
-Community server **v4.16.0**: 37 tools. The action table below was extracted
+Community server **v5.2.2**: 37 tools. The action table below was extracted
 at v4.13.2 (721 actions; the absolute count depends on the parser, because
 each tool documents its actions in a different format, so compare deltas, not
 totals). Added since and not in the table: `timeline.replace_source_range`
@@ -21,7 +21,14 @@ destructive, `dry_run` supported) and `timeline_item.probe_keyframe_override`
 / `timeline_name` pinning on every timeline-scoped tool, `ignored_params` on
 success, `timeline_item_id` on the `timeline_item*` tools, `make_current` on
 `timeline duplicate`, `target: "timeline"` on `drx generate`, and MCP
-`isError: true` on every error envelope. `script_plugin` no longer has
+`isError: true` on every error envelope. Later releases, also outside the table: power windows
+for Resolve 21 (v4.17), caption editing with Resolve open (v4.18), offline writers for speed
+ramps, keyframed grades and Magic Mask clicks (v4.19), a `source` (`auto`/`shipped`/`installed`)
+on `search_api` / `describe_api` / `api_surface` so they read the installed Resolve's own stub
+(v5.1), and the film-scoring handoff: `timeline_markers export_cue_sheet`,
+`compare_cue_sheets`, `timeline film_snapshot` / `film_stems_return` / `film_preflight` (v5.2).
+v5.0 removed spec hooks from `project_manager apply_spec` and caller-chosen binaries from the
+advanced server. `script_plugin` no longer has
 `execute` / `run_inline` (removed upstream in v3.0.0: the server does not run
 caller-supplied code).
 

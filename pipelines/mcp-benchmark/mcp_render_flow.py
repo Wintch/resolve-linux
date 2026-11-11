@@ -34,6 +34,7 @@ rpc("initialize", {"protocolVersion":"2024-11-05","capabilities":{},"clientInfo"
 rpc("notifications/initialized", notify=True)
 NAME, OUT = "zz_mcp_render_test", os.path.expanduser("~/Videos/zz_mcp")
 src = os.path.expanduser(os.environ["RENDER_TEST_VIDEO"])
+os.makedirs(OUT, exist_ok=True)  # a missing TargetDir opens a blocking "Render Path Inaccessible" modal
 tool("project_manager", "delete", {"name": NAME, "close_current": True}, show=False)
 tool("project_manager", "create", {"name": NAME})
 print("page before:", json.dumps(tool("resolve_control", "get_page", show=False))[:90])

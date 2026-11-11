@@ -23,7 +23,7 @@ The two servers:
 | `resolve_headless_stdio.py` | Shim around the community checkout's `scripts/resolve_headless.py run` that keeps its status lines off stdout (the MCP channel). |
 | `mcp_filter.py` | Stdio filter that hides and refuses chosen tools (used to remove the vendor's `run_script_unsafe`). Fails closed: batches, non-JSON lines and malformed calls never reach the server. |
 | `resolve_client.py` | `ResolveClient`: native-first, raising, timeout-guarded client over both servers (`import_media`, `grab_still`, `render()` with a loudness gate). |
-| `validate_client.py` | Live end-to-end test of `resolve_client.py` (17 checks, asserts on returned values, ends with negative checks). |
+| `validate_client.py` | Live end-to-end test of `resolve_client.py` (17 checks, asserts on returned values, ends with negative checks). Under `-nogui`, 16 pass (`grab_still` needs the Color page). Under the `xvfb` backend the run is not reliable yet: after `grab_still` switches to the Color page, later `LoadRenderPreset` and `SetCurrentTimeline` calls fail. |
 | `setup_bench_project.py` | Idempotent fixture: project `MCP-Benchmark`, timeline `bench_tl` with 8 "Solid Color" generator clips. |
 | `bench_lib.py` | Shared stdio-client helpers for both servers, `resolve_env()`, the fixture guard, timing records. |
 | `bench_01_simple.py`, `bench_02_batch_rename.py`, `bench_03_subtitles.py` | Native-vs-community timing benchmarks; bench_03 also exercises `CreateSubtitlesFromAudio`. Raw timings go to `*_results.jsonl` next to the script (local output). |
@@ -86,12 +86,15 @@ display/cookie mismatch, not the External scripting preference.
 |---|---|---|---|
 | `native` | vendor `ResolveMCP` | one already open | someone at the desktop |
 | `community` | community `src/server.py` | one already open | someone at the desktop |
-| `headless` | community, via `resolve_headless_stdio.py` | `-nogui`, started and stopped by the backend (`guard`/`start`/`run`/`stop`) | unattended caller, edits only: **`-nogui` cannot render** |
+| `headless` | community, via `resolve_headless_stdio.py` | `-nogui`, started and stopped by the backend (`guard`/`start`/`run`/`stop`) | unattended caller; edits and renders, no pages, a raised dialog blocks the call |
 | `xvfb` | community, via `resolve_xvfb_stdio.py` | full GUI in a private Xvfb | unattended caller that needs renders |
 | `native-xvfb` | vendor, through `mcp_filter.py --block run_script_unsafe` | the same Xvfb session as `xvfb` | unattended caller, vendor tools without the shell |
 
-**Why Xvfb.** Under `-nogui`, `LoadRenderPreset` returns `False` and render calls hang until
-timeout. Started with its normal GUI inside `Xvfb :99 -screen 0 1920x1080x24 +extension GLX
+**Why Xvfb.** `-nogui` has no pages (`OpenPage("color")` leaves the page unchanged, so
+`GrabStill` fails) and cannot show a dialog it raises: the call that triggered it never returns.
+A missing render `TargetDir` is enough ("Render Path Inaccessible"), which is the likely cause of
+render calls that hang under `-nogui`; with the directory in place, `load_preset`, `set_settings`,
+`add_job` and `start` complete there too. Started with its normal GUI inside `Xvfb :99 -screen 0 1920x1080x24 +extension GLX
 +render -noreset` (nothing appears on any desktop), Resolve answers the scripting API the same
 way and the render queue works: a 64 s 1080p clip renders to H.264 in ~4 s through the API and
 ~5 s through the community MCP. Cold start to the first MCP answer: 8-10 s.
@@ -226,7 +229,17 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   `TIMELINE_NOT_FOUND`, `TIMELINE_SELECTOR_MISMATCH`, `ITEM_NOT_FOUND` errors carry
   `isError: true`; unknown keys come back in `ignored_params`; `timeline_item_id`
   (`GetUniqueId()`) is the stable item selector, because on 21.1 `item_index` counts
-  transitions; `duplicate` keeps the original current unless `make_current: true`.
+  transitions (an unknown id returns `ITEM_NOT_FOUND`); `duplicate` keeps the original current
+  unless `make_current: true`.
+- FCPXML export writes a bundle directory (`<name>.fcpxml/Info.fcpxml`);
+  `timeline probe_interchange_roundtrip` (format `fcpxml`) exports it, re-imports it and compares:
+  structure matches, generator clips come back offline.
+- `graph apply_grade_from_drx` with `source: "timeline"` refuses a `.drx` without a timeline grade
+  (`<pTrackVer>`) with `DRX_NO_TIMELINE_GRADE` instead of emptying the timeline graph.
+- Since v5.0 the server refuses caller-chosen commands and binaries: `apply_spec` no longer runs
+  spec hooks (`SPEC_HOOKS_NOT_RUN`), the advanced server rejects binary overrides
+  (`BINARY_OVERRIDE_REFUSED`), and media paths starting with `-` are refused
+  (`OPTION_LIKE_PATH_REFUSED`; pass an absolute path).
 - `set_property` answers `success: true` for `Pan`; color controls (Lift/Gamma/Gain) are not
   `set_property` keys.
 - `timeline_frame capture` defaults to `quality="frame"` (`ExportCurrentFrameAsStill`: correct
@@ -293,7 +306,7 @@ npm run smoke                                          # prints the version
 venv/bin/python scripts/doctor.py                      # core checks [OK]; the scripting [WARN] is expected with Resolve stopped
 ```
 
-Then count the tools in-process (`mcp.list_tools()`; 37 at v4.16.0), start Resolve and run
+Then count the tools in-process (`mcp.list_tools()`; 37 at v5.2.2), start Resolve and run
 `validate_client.py` against the fixture, and update [MCP-CAPABILITIES.md](../../MCP-CAPABILITIES.md).
 If a patch stops applying, re-apply it by hand and regenerate it with `git format-patch -1`.
 

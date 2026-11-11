@@ -174,7 +174,7 @@ From Blackmagic's "Supported Formats and Codecs" (Rocky Linux table), confirmed 
 | No scripting method adds an OFX/ResolveFX effect (Film Grain, Super Scale, Speed Warp, Noise Reduction) or a new node | GUI, or a pre-built `.drx` via `Graph.ApplyGradeFromDRX` |
 | `CreateMagicMask()` does nothing without clicks on the subject | a person clicks in the Magic Mask palette once; `RegenerateMagicMask()` works afterwards |
 | A failed or interrupted render does not recover cleanly: silent `None` returns, GUI dialogs block calls, `Quit()` hangs on its save dialog | treat an unexpected `None` as a blocked dialog; kill and relaunch; `ResolveClient.render()` wraps this |
-| `-nogui` instances cannot use the render queue (`LoadRenderPreset` returns False, renders hang) | run the GUI inside a private `Xvfb` display |
+| A `-nogui` instance cannot show a dialog but still raises it, and the call never returns (a missing render `TargetDir`, `SaveProject` on a never-saved project) | create the output directory first and guard saves; run the GUI inside a private `Xvfb` display when a dialog has to be seen and dismissed |
 | VRAM below the 16 GB AI-tool / 12 GB background-render minimums on 8 GB cards | hardware ceiling; stop other GPU workloads first |
 | Single-seat Studio license: no second Resolve to view a Remote Monitor stream on another desktop | the free iOS/Android Remote Monitor app, or a desktop stream/VNC |
 | NDI not built in | paid third-party plugin (Nobe Display) |
@@ -217,7 +217,8 @@ point for scripted work: native first, community only as a recorded fallback (`c
 `ResolveError` and returns parsed data, every call has a timeout, values are interpolated with `repr()`. It encodes the
 import, still and render gotchas below as code, and `render()` gates the deliverable with an ffprobe check and a
 loudness check. [`validate_client.py`](pipelines/mcp-benchmark/validate_client.py) is its live test (17 checks against
-the disposable `MCP-Benchmark` project only, including negative checks that failures are loud). Details and every
+the disposable `MCP-Benchmark` project only, including negative checks that failures are loud). Under `-nogui`
+16 pass: `grab_still` needs the Color page, and `OpenPage("color")` does not switch pages without a GUI. Details and every
 harness: [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
 
 ### Headless and virtual-display operation
@@ -225,9 +226,10 @@ harness: [pipelines/mcp-benchmark/](pipelines/mcp-benchmark/).
 For callers with nobody at the machine (an agent over SSH, an MCP client on another host):
 
 - **`-nogui`** (`resolve_headless.py` from the community repo) boots in ~6-10 s and supports timeline edits,
-  transforms and imports, but **not the render queue**.
+  transforms, imports and the render queue (a full render through the community MCP writes a valid H.264 file).
+  It has no pages (no Color page, so no `GrabStill`), and any dialog it raises blocks the call for good.
 - **GUI inside a private `Xvfb`** (`Xvfb :99 -screen 0 1920x1080x24 +extension GLX +render -noreset`, then
-  `DISPLAY=:99 /opt/resolve/bin/resolve`, no `-nogui`) answers the API the same way **and renders**: a 64 s 1080p clip
+  `DISPLAY=:99 /opt/resolve/bin/resolve`, no `-nogui`) answers the API the same way, has real pages, and renders: a 64 s 1080p clip
   rendered to H.264 in ~4-5 s, through the API and through the community MCP. `resolve_xvfb_stdio.py` lets both servers
   share one such session (first in starts it, last out quits it, never touches a Resolve on another display).
 - `run_script_unsafe` is a shell. Behind a restricted SSH key, put the vendor server behind

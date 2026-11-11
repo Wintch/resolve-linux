@@ -10,8 +10,13 @@ clients (e.g. the Python `mcp` SDK) drop the session.
 Only Python-level `sys.stdout` is redirected to stderr; fd 1 is untouched, so
 the child server still writes protocol frames to the real stdout.
 
+SIGTERM/SIGHUP/SIGINT are turned into SystemExit so upstream's `finally`
+("stop only what we started") still runs when the client closes the session
+with a signal; without it the `-nogui` Resolve outlives its caller.
+
 Usage: resolve_headless_stdio.py <repo> -- <server command...>
 """
+import signal
 import sys
 
 repo, *argv = sys.argv[1:]
@@ -22,4 +27,13 @@ sys.path.insert(0, f"{repo}/scripts")
 import resolve_headless as rh  # noqa: E402
 
 sys.stdout = sys.stderr
+
+
+def _terminate(signum, frame):
+    raise SystemExit(128 + signum)
+
+
+for _sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    signal.signal(_sig, _terminate)
+
 raise SystemExit(rh.cmd_run(argv, 120.0))
