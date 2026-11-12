@@ -262,8 +262,10 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   pinned timeline, a pinned `duplicate` reports the restored timeline as current);
   `TIMELINE_NOT_FOUND`, `TIMELINE_SELECTOR_MISMATCH`, `ITEM_NOT_FOUND` errors carry
   `isError: true`; unknown keys come back in `ignored_params`; `timeline_item_id`
-  (`GetUniqueId()`) is the stable item selector, because on 21.1 `item_index` counts
-  transitions (an unknown id returns `ITEM_NOT_FOUND`; lookup verified on 21.2 too); `duplicate` keeps the original current
+  (`GetUniqueId()`) is the stable item selector, because from 21.1 `item_index` counts
+  transitions: after `timeline_item add_transition` (a real Cross Dissolve, verified on 21.2) the
+  transition takes the next index and every later clip moves up by one, while `timeline_item_id`
+  still finds the same clip (an unknown id returns `ITEM_NOT_FOUND`); `duplicate` keeps the original current
   unless `make_current: true`.
 - FCPXML export writes a bundle directory (`<name>.fcpxml/Info.fcpxml`);
   `timeline probe_interchange_roundtrip` (format `fcpxml`) exports it, re-imports it and compares:
@@ -280,11 +282,21 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   frames of real footage). **Avoid `quality="render"`**: it went through the render queue and
   hung Resolve after a "GPU failed to perform image processing ... Error Code: 999" while other
   processes shared the GPU; only `kill -9` of caller and Resolve recovered.
-- `set_subtitle_preset` builds a new timeline revision and keeps the original. The installed
-  presets (`list_title_presets`: 134, of which 23 subtitle) can ask for fonts Linux does not
-  have: "Word Highlight" wants **Segoe UI Black**, and without it the Fusion comp renders no text
-  (`Could not find font: Segoe UI: Black` in `ResolveDebug.txt`; silent on the still route, a
-  failed job on the render route). Install a compatible font or remap the preset.
+- `set_subtitle_preset` builds a new timeline revision and keeps the original. The text only shows
+  in a render with burned-in subtitles (`ExportSubtitle: True`, `SubtitleFormat: "BurnIn"`);
+  `ExportFrame` and `get_image` do not draw the subtitle track. Its two bundled presets need fonts
+  that Debian does not install:
+  - "Lollipop", and Resolve's own title and subtitle templates (`list_title_presets`: 134, of which
+    23 subtitle), use **Open Sans**. Without it the render completes but the text is blank, with no
+    error. Fix: `apt install fonts-open-sans`.
+  - "Word Highlight" is a copy captured on Windows and asks for **"Segoe UI" style "Black"**. Without
+    it the render job fails ("The Fusion composition ... could not be processed";
+    `Font Not Found: Segoe UI Black` in `ResolveDebug.txt`). Fix: install a font with that family and
+    style, e.g. Noto Sans Black renamed with fontTools (name IDs 1/2/4/6/16/17), or pass
+    `inputs: {"font": "<installed family>", "fontStyle": "<style>"}` on each call.
+  - Fusion on Linux finds fonts only in the system font directories (`/usr/share/fonts`, ...), not in
+    `~/.local/share/fonts` or `~/.fonts`, so installing fonts needs root. The regression suite checks
+    both fonts (`t00`) and renders both presets (`t25`).
 - `import_bounded_media` (`start_frame`/`end_frame`): the end frame is inclusive; the
   destination folder must exist.
 - Upstream notes, not reproduced here: `Project.StartRendering` can return `False` and leave the

@@ -14,6 +14,11 @@
    is OK. A whole source that a baseline records (ResolveMCP, the stub, the community venv) going missing
    is a FAIL too, never a SKIP. Every documented community action must also appear as a string literal
    in the server source (the dispatch), or it is a FAIL.
+5. Fonts that Fusion titles need, installed where Fusion looks: Resolve's Fusion on Linux only finds fonts in
+   the system font directories, not in ~/.local/share/fonts or ~/.fonts. Open Sans (Resolve's own title and
+   subtitle templates, and the community's Lollipop preset) missing is a FAIL: those titles then render with
+   blank text and no error. "Segoe UI" style Black (the community's bundled Word Highlight preset) missing is
+   a WARN: that preset's render fails. See pipelines/mcp-benchmark/README.md for the fix.
 
 Usage: t00_install.py [--update-baselines]
 """
@@ -417,6 +422,42 @@ def check_dispatch():
     return f"{community_tools()['actions']} documented actions, each found as a literal in src/"
 
 
+# (family, style, FAIL when missing?, what needs it)
+FONTS = (("Open Sans", "Bold", True, "Resolve's title/subtitle templates, community Lollipop preset"),
+         ("Segoe UI", "Black", False, "community Word Highlight subtitle preset"))
+
+
+def check_fonts():
+    try:
+        listing = sh(["fc-list", "--format", "%{file}\t%{family}\t%{style}\n"])
+    except (OSError, RuntimeError) as exc:
+        raise Skip(f"fc-list unavailable: {exc}")
+    home = os.path.expanduser("~")
+    have, notes, missing_fail, missing_warn = [], [], [], []
+    for family, style, fatal, need in FONTS:
+        system = user = False
+        for line in listing.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            path, families, styles = parts
+            if family in families.split(",") and style in styles.split(","):
+                if path.startswith(home + "/"):
+                    user = True
+                else:
+                    system = True
+        if system:
+            have.append(f"{family} {style}")
+            continue
+        where = " (only in a user font directory, which Fusion does not read)" if user else ""
+        (missing_fail if fatal else missing_warn).append(f"{family} {style} for {need}{where}")
+    if missing_fail:
+        raise AssertionError("missing system-wide: " + "; ".join(missing_fail + missing_warn))
+    if missing_warn:
+        raise Warn("missing system-wide: " + "; ".join(missing_warn) + (f"; present: {', '.join(have)}" if have else ""))
+    return "system-wide: " + ", ".join(have)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--update-baselines", action="store_true", help="rewrite the baseline files from this install")
@@ -438,6 +479,7 @@ def main():
         lambda d: f"{d['count']} tools, {d['actions']} actions, {len(d.get('capabilities', []))} capabilities", up))
     suite.check("community: every documented action is dispatched", check_dispatch)
     suite.check("baseline: versions", lambda: versions_check(up))
+    suite.check("fonts Fusion titles need, system-wide", check_fonts)
     raise SystemExit(suite.finish())
 
 
