@@ -359,6 +359,7 @@ survey.
 | Folder | What |
 |---|---|
 | [mcp-benchmark/](pipelines/mcp-benchmark/) | the automation layer: `ResolveClient`, its live test, native-vs-community benchmarks, the `-nogui`/Xvfb launchers, `mcp_filter.py`, `resolve_mcp_wrapper.sh` (what `.mcp.json` points at), loudness gate, pixel-diff grade check |
+| [regression/](pipelines/regression/) | one command (`run.sh`) to validate the rig after upgrading Resolve, the community server, the driver or the wrappers: install and API-surface baselines, `ResolveClient`, both MCP servers, the 21.2 scripting additions and the session backends, on the fixture project only |
 | [prepare-for-resolve/](pipelines/prepare-for-resolve/) | normalizes a folder of footage before import: AAC → PCM, VFR → nearest standard constant rate, interlacing, unsupported codecs; prefers NVENC and warns when it falls back to CPU |
 | [resolve-update/](pipelines/resolve-update/) | downloading the Linux installer (no account) and updating Resolve with makeresolvedeb, with a rollback path: repacked `.deb`s of the working build (`dpkg-repack`) and a project/config snapshot |
 | [resolve-backup/](pipelines/resolve-backup/) | on-demand snapshot of Resolve's Disk Database projects and user config (Fusion, Fairlight), timestamped, outside git |

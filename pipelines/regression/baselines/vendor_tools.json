@@ -1,0 +1,134 @@
+{
+ "count": 18,
+ "tools": [
+  {
+   "name": "delete_lut_file",
+   "properties": [
+    "path"
+   ]
+  },
+  {
+   "name": "describe_grade",
+   "properties": [
+    "layer",
+    "source",
+    "timecode",
+    "track"
+   ]
+  },
+  {
+   "name": "generate_lut",
+   "properties": [
+    "path",
+    "size",
+    "transform"
+   ]
+  },
+  {
+   "name": "get_image",
+   "properties": [
+    "clip_name",
+    "frame_offset",
+    "max_dimension",
+    "roi_height",
+    "roi_width",
+    "roi_x",
+    "roi_y",
+    "source",
+    "timecode"
+   ]
+  },
+  {
+   "name": "get_resolve_status",
+   "properties": []
+  },
+  {
+   "name": "get_scripting_api",
+   "properties": [
+    "api",
+    "as_file",
+    "outline",
+    "types"
+   ]
+  },
+  {
+   "name": "get_scripting_docs",
+   "properties": [
+    "as_file",
+    "document",
+    "section"
+   ]
+  },
+  {
+   "name": "get_thumbnails",
+   "properties": [
+    "clip_name",
+    "count",
+    "end",
+    "max_dimension",
+    "source",
+    "start"
+   ]
+  },
+  {
+   "name": "get_whats_new",
+   "properties": [
+    "since"
+   ]
+  },
+  {
+   "name": "install_extras_package",
+   "properties": [
+    "names"
+   ]
+  },
+  {
+   "name": "launch_resolve",
+   "properties": []
+  },
+  {
+   "name": "list_extras_packages",
+   "properties": []
+  },
+  {
+   "name": "list_luts",
+   "properties": [
+    "kind"
+   ]
+  },
+  {
+   "name": "read_dctl",
+   "properties": [
+    "path"
+   ]
+  },
+  {
+   "name": "run_script",
+   "properties": [
+    "script",
+    "timeout"
+   ]
+  },
+  {
+   "name": "run_script_unsafe",
+   "properties": [
+    "script",
+    "timeout"
+   ]
+  },
+  {
+   "name": "search_scripting_api",
+   "properties": [
+    "api",
+    "pattern"
+   ]
+  },
+  {
+   "name": "write_dctl",
+   "properties": [
+    "content",
+    "path"
+   ]
+  }
+ ]
+}

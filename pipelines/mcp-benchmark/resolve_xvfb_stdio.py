@@ -180,7 +180,9 @@ def ensure_session():
     if rh.wait_until_scriptable(BOOT_TIMEOUT) is None:
         log(f"FAILED: not scriptable after {BOOT_TIMEOUT:.0f}s; cleaning up")
         rh._kill_process(proc)
-        kill_all(resolve_pids(), signal.SIGKILL)   # Resolve re-execs: what we spawned may not be the process that stayed
+        # Resolve re-execs: what we spawned may not be the process that stayed. Only ours (on our display): a person may
+        # have started their own Resolve on another display meanwhile.
+        kill_all([p for p in resolve_pids() if display_of(p) == DISPLAY], signal.SIGKILL)
         kill_all(xvfb_pids(), signal.SIGTERM)
         return 4
     log(f"ready in {time.monotonic() - t0:.1f}s")

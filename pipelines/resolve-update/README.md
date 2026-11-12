@@ -94,7 +94,8 @@ sudo -E MAKERESOLVEDEB=/path/to/makeresolvedeb_1.10.1_multi.sh \
     ./install_resolve.sh /path/to/DaVinci_Resolve_Studio_<version>_Linux.run
 
 # 4. Verify by hand: open a project, edit, render a frame. A process that launches is not
-#    evidence that it works. Re-run the MCP regression (pipelines/mcp-benchmark/) too.
+#    evidence that it works. Then run the regression suite: pipelines/regression/run.sh
+#    (stub and vendor-tool baselines, both MCP servers, the scripting additions).
 #    If something is wrong:
 sudo -E ./rollback.sh            # reinstalls the newest bundle's .debs (or pass a bundle dir)
 ```
@@ -124,5 +125,5 @@ by the newer one.
 - OS package upgrades and driver updates: do them separately, with your own checks, not
   in the same session as a Resolve upgrade (it confounds debugging).
 - Re-validating the MCP tooling and the capability catalog against the new or
-  rolled-back Resolve: run `pipelines/mcp-benchmark/validate_client.py` and refresh
+  rolled-back Resolve: run `pipelines/regression/run.sh` and refresh
   [MCP-CAPABILITIES.md](../../MCP-CAPABILITIES.md) by hand.

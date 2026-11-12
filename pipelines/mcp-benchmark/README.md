@@ -345,8 +345,10 @@ npm run smoke                                          # prints the version
 venv/bin/python scripts/doctor.py                      # core checks [OK]; the scripting [WARN] is expected with Resolve stopped
 ```
 
-Then count the tools in-process (`mcp.list_tools()`; 37 at v5.2.2), start Resolve and run
-`validate_client.py` against the fixture, and update [MCP-CAPABILITIES.md](../../MCP-CAPABILITIES.md).
+Then run the regression suite ([../regression/](../regression/), `./run.sh`): it compares the tool and
+action lists with the recorded baselines (37 tools at v5.2.2), runs `validate_client.py` and the live
+checks of both servers in a fresh `-nogui` session. Review any baseline FAIL, accept it with
+`./run.sh --offline --update-baselines`, and update [MCP-CAPABILITIES.md](../../MCP-CAPABILITIES.md).
 If a patch stops applying, re-apply it by hand and regenerate it with `git format-patch -1`.
 
 Notes:
