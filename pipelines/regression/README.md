@@ -91,6 +91,19 @@ gates on Resolve >= 21.2 for the calls that release added. Absence is a SKIP onl
 accepted baselines never had: once a tool, action, method or capability is in `baselines/`, losing it is
 a FAIL (the whole vendor server or stub going missing included).
 
+### Known results
+
+Reference run on Resolve Studio 21.2 + community server v5.2.11 (`-nogui`, no `--gui-xvfb`):
+**93 OK, 2 WARN, 2 SKIP, 1 FAIL**. Anything beyond the lines below is new and needs a look.
+
+| Status | Check | What it means |
+|---|---|---|
+| FAIL | `t40` `RippleDeleteSilence` | Resolve bug, not the suite: on a 6 s clip (tone, 2 s of silence, tone) `TimelineItem.RippleDeleteSilence({"threshold": -45.0})` returns `True` and removes the **whole** audio item instead of the 2 s gap. Seen under `-nogui`; do not use it, cut silence outside Resolve (e.g. ffmpeg `silencedetect`) and rebuild from ranges |
+| WARN | `t20` `import_media outside Media Storage` | `MediaPool.ImportMedia` imports a file that is outside every Media Storage volume, and the community `import_media` adds no guard. Not a bug, a fact to know: the Media Storage list does not restrict scripted imports |
+| WARN | `t30` `write_dctl accepts a float3 local as the return value` | Resolve's DCTL validator (`Resolve.ValidateDCTL`, used by the vendor `write_dctl`) rejects `float3 o = make_float3(...); return o;` with "return value must be float3". Return the `make_float3(...)` expression directly |
+| SKIP | `t10` `grab_still` | needs the Color page, and a `-nogui` Resolve has no pages; `frame_image` covers stills there |
+| SKIP | `t50` `xvfb backend` | GUI Resolve under Xvfb is only tried with `--gui-xvfb` (and the Color page aborts Resolve there) |
+
 ## Baselines
 
 `baselines/` records the API surface of the last accepted install: the scripting stub's methods, their

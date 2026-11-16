@@ -312,8 +312,10 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   returns a usable "Untitled Project" but `GetCurrentPage()` is `None` and Media Pool writes
   silently return `None`. Create or load a *named* project first.
 - Source media and render targets must be inside a registered **Media Storage** volume
-  (`MediaStorage.GetMountedVolumeList()`); anything else fails silently on import and with a
-  blocking dialog on render.
+  (`MediaStorage.GetMountedVolumeList()`): a render target outside fails with a blocking dialog, and
+  `MediaStorage.AddItemListToMediaPool` refuses a source outside. `MediaPool.ImportMedia` (and the
+  community `import_media`) does import a file outside every volume on 21.2, so do not rely on Media
+  Storage to keep scripted imports in place.
 - `MediaPool.ImportMedia()` can return an empty list for a valid file that
   `MediaStorage.AddItemListToMediaPool()` imports fine. Both dedup by path: re-importing a path
   already in the pool returns nothing (not the existing item), even if the file changed; use a

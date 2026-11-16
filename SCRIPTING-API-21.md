@@ -92,6 +92,29 @@ followed through the status call.
   `Complete` with nothing to show. `True` does not mean there is a transcript: check
   `GetTranscription()`.
 
+**What a transcript looks like on 21.2, and what the API cannot do with it.** The stub types the
+result as `Transcription = {language, segments: [{start, end, text, speaker, words: [{start, end,
+text}]}]}`, all times as source timecode strings, `'(...)'` marking silence. Measured on a 57 s
+multi-topic speech clip (espeak, 99 words) in the fixture project:
+
+- Transcription took 12 s. It came back as **one segment covering the whole clip** (`00:00:00:00` to
+  `00:00:56:04`, `speaker` absent), so segment timing alone cannot locate a passage: the cut points
+  have to come from `words`.
+- The JSON was 7.2 KB, 0.65 KB without `words`: per-word timing is about 11x the size of the text
+  (~70 bytes per word, so roughly 0.6 MB per hour of speech). Each word is
+  `{"start": "00:00:00:10", "end": "00:00:00:22", "text": " morning"}`, with a leading space.
+- **There is no search.** `dir()` of `Resolve`, `Project`, `MediaPool`, `MediaPoolItem`, `Folder` and
+  `Timeline` has nothing that finds or queries text; the only transcript calls are `TranscribeAudio`,
+  `GetTranscription`, `SetTranscription` and `ClearTranscription`, and IntelliSearch only has
+  `AnalyzeForIntellisearch` / `ResetIntellisearchAnalysis` (its search exists only in the UI).
+
+So "find the passages where the speaker talks about X" is client-side work: read the segment text (or
+the words) yourself, choose the ranges, convert the source timecodes to frames in the clip's own
+frame rate, and place them with `MediaPool.AppendToTimeline` clip infos (the community server's
+`timeline create_variant_from_ranges` does that last step; its `media_pool_item get_transcription`
+drops `words` unless `include_words` is set, and its `strata_query` / `query_index` match literal words
+only).
+
 **The `False` returns, unexplained.** In one Resolve instance (started with `launch_resolve`), every `TranscribeAudio` (clip and folder, with and without speaker
 detection) and every `CreateSubtitlesFromAudio` returned `False` with status `Inactive`, on
 valid speech, in two different projects, and `bench_03_subtitles.py` (which passes normally)
@@ -154,7 +177,8 @@ MCP-Benchmark fixture project):
 | `Resolve.GetEffectsList('video')` | Works. 130 video effects, categories `fusion` and `ofx`. |
 | `TimelineItem.AddEffect` / `GetEffects` / `DeleteEffects` | Work. `AddEffect('ofx', 'Resolve FX/Resolve FX Film Emulation/Film Grain')` returned an `Effect`. The exported frame changes with Film Grain applied and is byte-identical to the original again after `DeleteEffects`. |
 | `Timeline.ExportFrame(10, {encodedImageFormat: 'png'})` | Works without a GUI. Returned a 1920x1080 PNG as base64 (default `outputType` `encodedString`), byte-identical on repeat (deterministic). |
-| Everything else in the table above | Not tested on 21.2. |
+| `TimelineItem.RippleDeleteSilence({"threshold": -45.0})` | **Broken under `-nogui`.** On a 6 s audio clip (tone, 2 s of silence, tone) it returns `True` and deletes the whole item instead of the 2 s gap. Cut silence outside Resolve and rebuild the timeline from ranges. |
+| Everything else in the table above | Exercised by the regression suite's `t40` module (see [pipelines/regression](pipelines/regression/README.md#known-results)). |
 
 Several `Project` status getters in the 21.2 list (`GetAnalyzeForSlateStatus`, `GetDetectSceneCutsStatus`,
 `GetRenderWithQuickExportStatus`, `GetTranscribeAudioStatus`, `GetCreateSubtitlesFromAudioStatus`) already worked at
