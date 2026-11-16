@@ -11,7 +11,7 @@ the live tests run against this catalog; this file is just the map.
 
 ## Version
 
-Community server **v5.2.2**: 37 tools. The action table below was extracted
+Community server **v5.2.11**: 37 tools. The action table below was extracted
 at v4.13.2 (721 actions; the absolute count depends on the parser, because
 each tool documents its actions in a different format, so compare deltas, not
 totals). Added since and not in the table: `timeline.replace_source_range`
@@ -27,6 +27,10 @@ ramps, keyframed grades and Magic Mask clicks (v4.19), a `source` (`auto`/`shipp
 on `search_api` / `describe_api` / `api_surface` so they read the installed Resolve's own stub
 (v5.1), and the film-scoring handoff: `timeline_markers export_cue_sheet`,
 `compare_cue_sheets`, `timeline film_snapshot` / `film_stems_return` / `film_preflight` (v5.2).
+v5.2.9 tightened argument handling: an argument passed beside `action` instead of inside `params`
+is refused with `UNKNOWN_ARGUMENTS` (it used to be dropped), and a `clip_infos` `track_index` that
+names no existing track is refused (`INVALID_TRACK_INDEX` / `TRACK_INDEX_OUT_OF_RANGE`) instead of
+landing on track 1. v5.2.4 fixed `probe_interchange_roundtrip` leaving another timeline current.
 v5.0 removed spec hooks from `project_manager apply_spec` and caller-chosen binaries from the
 advanced server. `script_plugin` no longer has
 `execute` / `run_inline` (removed upstream in v3.0.0: the server does not run

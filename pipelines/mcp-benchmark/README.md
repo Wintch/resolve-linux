@@ -261,7 +261,9 @@ call. Every such fallback is recorded in `client.fallbacks` (capability + why);
   the caller's current timeline; verified on 21.1.1: pinned reads and writes land only on the
   pinned timeline, a pinned `duplicate` reports the restored timeline as current);
   `TIMELINE_NOT_FOUND`, `TIMELINE_SELECTOR_MISMATCH`, `ITEM_NOT_FOUND` errors carry
-  `isError: true`; unknown keys come back in `ignored_params`; `timeline_item_id`
+  `isError: true`; unknown keys inside `params` come back in `ignored_params`, while since v5.2.9 an
+  argument passed beside `action` (outside `params`) is refused with `UNKNOWN_ARGUMENTS` and the
+  corrected `params` (before, it was dropped silently); `timeline_item_id`
   (`GetUniqueId()`) is the stable item selector, because from 21.1 `item_index` counts
   transitions: after `timeline_item add_transition` (a real Cross Dissolve, verified on 21.2) the
   transition takes the next index and every later clip moves up by one, while `timeline_item_id`
@@ -358,7 +360,7 @@ venv/bin/python scripts/doctor.py                      # core checks [OK]; the s
 ```
 
 Then run the regression suite ([../regression/](../regression/), `./run.sh`): it compares the tool and
-action lists with the recorded baselines (37 tools at v5.2.2), runs `validate_client.py` and the live
+action lists with the recorded baselines (37 tools at v5.2.11), runs `validate_client.py` and the live
 checks of both servers in a fresh `-nogui` session. Review any baseline FAIL, accept it with
 `./run.sh --offline --update-baselines`, and update [MCP-CAPABILITIES.md](../../MCP-CAPABILITIES.md).
 If a patch stops applying, re-apply it by hand and regenerate it with `git format-patch -1`.

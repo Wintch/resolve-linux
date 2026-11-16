@@ -1,7 +1,7 @@
 {
- "community_describe": "v5.2.2-2-g364c8e3",
- "community_package": "5.2.2",
- "community_server": "5.2.2",
+ "community_describe": "v5.2.11-2-g51452a3a",
+ "community_package": "5.2.11",
+ "community_server": "5.2.11",
  "resolve_binary": "21.2.0.0006",
  "resolve_package": "davinci-resolve-studio 21.2-mrd1.10.1",
  "vendor_tool_count": 18
