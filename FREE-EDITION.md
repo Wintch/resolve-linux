@@ -52,6 +52,9 @@ Tell the render the intermediate's size before starting: four hours of DNxHR HQ 
 - Two installations sharing live through a network project database is Studio's collaboration feature and is not covered here. A second person takes their own copy of the same `.drp` and the same intermediates.
 - **Not verified here:** a round trip of a real project between the two editions; this describes how the formats are documented to behave.
 
+## Proxy first, final pass on Studio
+A workable split: whoever uses the free edition edits on **proxies** made at the start (`prepare-for-resolve --edition free --dnxhr-profile dnxhr_lb`, 41 GB per hour of 1080p60; ProRes Proxy at 20 GB if the free edition's Deliver page offers it) and hands over only the `.drp`. The Studio copy relinks the project to the original media, which it decodes, and does the grade, the effects and the delivery render. Keep the file names the same as the originals (the folder mode keeps each stem; only the extension changes) so the relink can match by name. **Not verified:** how Relink Clips treats the changed extension, and Resolve's own Proxy Mode in the free edition; test both once before depending on it.
+
 ## Download
 [`pipelines/resolve-update/download_resolve.sh --free`](pipelines/resolve-update/download_resolve.sh) resolved the free 21.2 release when tried, then the vendor's site answered **403** to the request for the download link, so the free installer was downloaded by hand from the vendor's page. Re-run `--list` and `--dry-run` before relying on it.
 
