@@ -69,6 +69,16 @@ Yes, but for narrower reasons than when the original script was written:
   On the Free edition, without an NVIDIA GPU, or under Wayland, pre-transcode them.
 - **AC3** decodes since 18.5b1 and needs no special handling.
 
+## Free edition (`--edition free`)
+
+The defaults above are for **Studio** with an NVIDIA card, where H.264, H.265 and AV1 decode. The **free edition on Linux decodes none of them**, so with `--edition free` only DNxHR/DNxHD and ProRes count as readable and everything else is re-encoded to **DNxHR in a `.mov`** with PCM sound (`--container` and `--video-codec` still override). The tier is `--dnxhr-profile` (`dnxhr_lb`, `dnxhr_sq`, `dnxhr_hq` by default, `dnxhr_hqx`, `dnxhr_444`); DNxHR has a fixed bitrate per tier, so HQ is large (about 550 MB for 10 s of 1080p60 against 113 MB for LB, measured): see [FREE-EDITION.md](../../FREE-EDITION.md) for the sizes and for exporting without enormous files.
+
+```bash
+python3 prepare_for_resolve.py ~/Videos/incoming --edition free --dnxhr-profile dnxhr_sq --dry-run
+python3 prepare_for_resolve.py ~/Videos/incoming --edition free --dnxhr-profile dnxhr_sq --output-dir ~/Videos/ready
+```
+Tested by `python3 test_prepare_for_resolve.py` (the decisions for both editions, and an end-to-end run when ffmpeg is installed).
+
 ## Usage
 
 ```bash

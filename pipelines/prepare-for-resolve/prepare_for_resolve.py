@@ -38,6 +38,10 @@ SAFE_VIDEO_CODECS = {
     "h264", "hevc", "av1", "prores", "dnxhd",  # dnxhd covers DNxHR variants in ffprobe
 }
 
+# The free edition decodes no H.264/H.265 on Linux (Studio and an NVIDIA GPU only, no software fallback): of the common codecs only DNxHR/DNxHD and ProRes are
+# readable there. `--edition free` uses this list and makes DNxHR files (see ../../FREE-EDITION.md).
+SAFE_VIDEO_CODECS_FREE = {"prores", "dnxhd"}
+
 # Known-bad video codecs, same set davincirecode10.sh special-cased.
 BAD_VIDEO_CODECS = {"h263", "vp8", "wmv3", "msvideo1", "mjpeg"}
 
@@ -134,12 +138,14 @@ def decide(info: dict, args: argparse.Namespace) -> Decision:
     if video_streams:
         v = video_streams[0]
         vcodec = v.get("codec_name", "")
+        safe = SAFE_VIDEO_CODECS_FREE if args.edition == "free" else SAFE_VIDEO_CODECS
         if vcodec in BAD_VIDEO_CODECS:
             d.transcode_video = True
             d.reason.append(f"video codec '{vcodec}' is known-bad on Resolve/Linux import")
-        elif vcodec not in SAFE_VIDEO_CODECS:
+        elif vcodec not in safe:
             d.transcode_video = True
-            d.reason.append(f"video codec '{vcodec}' not in the confirmed-safe import list")
+            d.reason.append(f"video codec '{vcodec}' not in the confirmed-safe import list"
+                            + (" (the free edition cannot decode it on Linux)" if args.edition == "free" else ""))
 
         if is_vfr(v):
             d.transcode_video = True
@@ -188,6 +194,10 @@ def build_ffmpeg_cmd(
 
     if decision.transcode_video:
         cmd += ["-c:v", args.video_codec]
+        if args.video_codec == "dnxhd":
+            cmd += ["-profile:v", args.dnxhr_profile, "-pix_fmt", "yuv422p10le" if args.dnxhr_profile in ("dnxhr_hqx", "dnxhr_444") else "yuv422p"]
+            if args.dnxhr_profile == "dnxhr_444":
+                cmd[-1] = "yuv444p10le"
         # Only force a constant rate when actually fixing VFR -- a codec-only transcode
         # (e.g. a bad-codec source that's already constant-rate) must not have its frame
         # rate touched just because it's going through ffmpeg for an unrelated reason.
@@ -267,8 +277,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--output-dir", default="exportedvideo", help="Output directory (default: exportedvideo)")
     p.add_argument("--framerate", type=float, default=None, help="Force VFR sources to this constant framerate. Default: infer per-file, snapping each source's own average to the nearest standard rate (23.976/24/25/29.97/30/48/50/59.94/60) -- never a single global value")
     p.add_argument("--audio-codec", default="pcm_s24le", help="Target audio codec (default: pcm_s24le)")
+    p.add_argument("--edition", choices=("studio", "free"), default="studio", help="Resolve edition the footage is for. studio (default): H.264/H.265/AV1 are left alone (needs an NVIDIA GPU). free: only DNxHR/ProRes are readable, everything else becomes DNxHR in a .mov")
+    p.add_argument("--dnxhr-profile", choices=("dnxhr_lb", "dnxhr_sq", "dnxhr_hq", "dnxhr_hqx", "dnxhr_444"), default="dnxhr_hq", help="DNxHR tier when the video codec is dnxhd (default dnxhr_hq: about 550 MB per 10 s of 1080p60; dnxhr_lb is about a fifth of that)")
     p.add_argument("--video-codec", default=None, help="Target video codec (default: h264_nvenc if this machine's ffmpeg has NVENC, else CPU h264 with a warning; try prores_ks for editing)")
-    p.add_argument("--container", default="mkv", help="Output container extension (default: mkv)")
+    p.add_argument("--container", default=None, help="Output container extension (default: mkv, or mov with --edition free)")
     p.add_argument("--no-deinterlace", action="store_true", help="Skip yadif deinterlacing (e.g. if you'll use Resolve Studio's own neural deinterlace instead)")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2), help="Parallel workers (default: half of CPU count, since ffmpeg itself multithreads per instance)")
     p.add_argument("--dry-run", action="store_true", help="Print decisions without running ffmpeg")
@@ -284,8 +296,10 @@ def main(argv: list[str] | None = None) -> int:
         print("error: ffmpeg and ffprobe must both be on PATH", file=sys.stderr)
         return 1
 
+    if args.container is None:
+        args.container = "mov" if args.edition == "free" else "mkv"
     if args.video_codec is None:
-        args.video_codec = default_video_codec()
+        args.video_codec = "dnxhd" if args.edition == "free" else default_video_codec()
 
     if not args.source_dir.is_dir():
         print(f"error: {args.source_dir} is not a directory", file=sys.stderr)

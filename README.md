@@ -14,13 +14,14 @@ each editing task covered, the aim is:
 2. **Automation of the same task** through the scripting API or MCP, so it does not have to be redone by hand.
 3. **A Resolve-free path** where one exists and is worth having (for example `prepare-for-resolve`, which fixes
    footage with ffmpeg before import).
-4. **Free vs. Studio noted explicitly** wherever a feature is Studio-gated.
+4. **Free vs. Studio noted explicitly** wherever a feature is Studio-gated; the free edition has its own page, [FREE-EDITION.md](FREE-EDITION.md).
 
 ## Documents
 
 | File | What |
 |---|---|
 | this README | install on Debian, GPU/codec findings, known limitations, scripting/MCP overview, plugins |
+| [FREE-EDITION.md](FREE-EDITION.md) | the free edition on Linux: what it cannot decode, getting footage in, exporting without enormous files (measured sizes), handing a project to a Studio copy |
 | [MCP-CAPABILITIES.md](MCP-CAPABILITIES.md) | the full tool → action catalog of the community MCP server and the vendor's own `ResolveMCP` |
 | [SCRIPTING-API-21.md](SCRIPTING-API-21.md) | which Resolve 21.x scripting API additions work when exercised live, which hang or stay inconclusive |
 | [PERFORMANCE.md](PERFORMANCE.md) | hardware performance guide: storage and filesystems, RAM, cache placement, proxies, VRAM, swap |
@@ -41,7 +42,7 @@ Debian packages. Works in practice, not vendor-supported.
 **Download (no account needed).** The Linux `.run` comes from
 [blackmagicdesign.com/support](https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion) through the
 site's "download only" request: no account and no personal data. Get **DaVinci Resolve Studio for Linux**, not Free
-(see [Codecs on Linux](#codecs-on-linux) for why Studio matters).
+(see [Codecs on Linux](#codecs-on-linux) for why Studio matters; if you only have the free edition, [FREE-EDITION.md](FREE-EDITION.md) says what to expect). The script's `--free` asked for the free 21.2 link and the vendor's site answered 403 when last tried; download it by hand then.
 [`pipelines/resolve-update/download_resolve.sh`](pipelines/resolve-update/download_resolve.sh) makes the same request
 from the command line (`--studio` by default, `--free`, `--version X.Y[.Z]`, `--list`, `--dry-run`, optional
 `DEST_DIR`); it resumes an interrupted download and refuses to start with less free space than twice the `.zip`.
@@ -155,7 +156,7 @@ From Blackmagic's "Supported Formats and Codecs" (Rocky Linux table), confirmed 
   [pipelines/prepare-for-resolve/](pipelines/prepare-for-resolve/).
 - **H.264/H.265 encoders only appear when `GPUDetect` found CUDA** ([previous section](#gpu-detection-x11-vs-wayland)).
   Without them, ProRes, DNxHD/DNxHR, CineForm, FFV1, JPEG 2000 and uncompressed remain.
-- **Free edition, no NVIDIA GPU, or stuck on Wayland**: pre-transcode to DNxHR + PCM:
+- **Free edition, no NVIDIA GPU, or stuck on Wayland**: pre-transcode to DNxHR + PCM (the folder tool does this with `--edition free`; details and export sizes in [FREE-EDITION.md](FREE-EDITION.md)):
 
   ```bash
   ffmpeg -hwaccel cuda -i input.mp4 -c:v dnxhd -profile:v dnxhr_hq -pix_fmt yuv422p -c:a pcm_s16le output.mov
@@ -174,7 +175,8 @@ From Blackmagic's "Supported Formats and Codecs" (Rocky Linux table), confirmed 
 | Limitation | Mitigation |
 |---|---|
 | AAC unsupported, any edition | transcode audio to PCM before import ([Codecs](#codecs-on-linux)) |
-| H.264/HEVC need Studio + NVIDIA, no software fallback | Studio with CUDA detected, or pre-transcode to DNxHR |
+| H.264/HEVC need Studio + NVIDIA, no software fallback; **on the free edition they do not open at all** | Studio with CUDA detected, or pre-transcode to DNxHR (`prepare-for-resolve --edition free`, [FREE-EDITION.md](FREE-EDITION.md)) |
+| Free edition: nothing H.26x can be rendered, and DNxHR exports are enormous (HQ is about 200 GB per hour of 1080p60) | export the smallest intermediate (DNxHR LB/SQ, ProRes Proxy/LT if offered) and make the delivery file with ffmpeg ([sizes](FREE-EDITION.md#getting-a-file-out-without-enormous-files)) |
 | Wayland: CUDA not detected → no NVENC codecs, render livelock | native X11 session + reboot ([GPU detection](#gpu-detection-x11-vs-wayland)) |
 | `dvr.scriptapp('Resolve')` blocks forever while the GUI is in a playback loop | stop playback first; put a timeout on every connection |
 | Render output must be inside a registered **Media Storage** volume, and so should imports | register the directory first; outside it a render pops a blocking "Render Path Inaccessible" dialog and `MediaStorage.AddItemListToMediaPool` refuses the file, while on 21.2 `MediaPool.ImportMedia` imports it anyway (regression `t20`), so Media Storage is not a guard for scripted imports |
@@ -361,7 +363,7 @@ survey.
 |---|---|
 | [mcp-benchmark/](pipelines/mcp-benchmark/) | the automation layer: `ResolveClient`, its live test, native-vs-community benchmarks, the `-nogui`/Xvfb launchers, `mcp_filter.py`, `resolve_mcp_wrapper.sh` (what `.mcp.json` points at), loudness gate, pixel-diff grade check |
 | [regression/](pipelines/regression/) | one command (`run.sh`) to validate the rig after upgrading Resolve, the community server, the driver or the wrappers: install and API-surface baselines, `ResolveClient`, both MCP servers, the 21.2 scripting additions and the session backends, on the fixture project only |
-| [prepare-for-resolve/](pipelines/prepare-for-resolve/) | normalizes a folder of footage before import: AAC → PCM, VFR → nearest standard constant rate, interlacing, unsupported codecs; prefers NVENC and warns when it falls back to CPU |
+| [prepare-for-resolve/](pipelines/prepare-for-resolve/) | normalizes a folder of footage before import: AAC → PCM, VFR → nearest standard constant rate, interlacing, unsupported codecs; `--edition free` makes DNxHR `.mov` files for the free edition (tiers with `--dnxhr-profile`), the default `studio` prefers NVENC and warns when it falls back to CPU; has a test |
 | [resolve-update/](pipelines/resolve-update/) | downloading the Linux installer (no account) and updating Resolve with makeresolvedeb, with a rollback path: repacked `.deb`s of the working build (`dpkg-repack`) and a project/config snapshot |
 | [resolve-backup/](pipelines/resolve-backup/) | on-demand snapshot of Resolve's Disk Database projects and user config (Fusion, Fairlight), timestamped, outside git |
 | [resolve-power/](pipelines/resolve-power/) | holds CPU/GPU at full performance while Resolve runs and restores afterwards; can pause a named systemd power service meanwhile (`--pause-unit`); `--adaptive` goes full only while the timeline has heavy effects or a render is running |
